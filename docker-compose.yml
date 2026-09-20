@@ -1,0 +1,17 @@
+# Local dev Postgres for fastapi-users + app state (saved dashboards, chart
+# edits) -- see docs/agent_ui_architecture_plan.md. Self-hosted deliberately
+# (no third-party auth/DB service): `docker compose up -d` runs it locally.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: epl
+      POSTGRES_PASSWORD: epl
+      POSTGRES_DB: epl
+    ports:
+      - "5432:5432"
+    volumes:
+      - epl_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  epl_postgres_data:

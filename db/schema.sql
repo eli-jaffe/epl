@@ -276,3 +276,79 @@ SELECT
 FROM fact_player_season fs
 JOIN dim_player p       ON p.player_code = fs.player_code
 LEFT JOIN dim_team t    ON t.team_code = fs.team_code;
+
+-- ------------------------------------------------------------------
+-- Agent observability (component 2, see docs/agent_ui_architecture_plan.md)
+--
+-- Append-only, same convention as ingest_runs above -- not upserted.
+-- user_id is a soft reference to fastapi-users' Postgres `user` table (no
+-- cross-db FK possible/needed): Postgres owns identity, this warehouse owns
+-- the trace log, joined only ever in application code, never in SQL.
+-- ------------------------------------------------------------------
+CREATE TABLE agent_query (
+    query_id        UUID PRIMARY KEY DEFAULT uuid(),
+    user_id         UUID NOT NULL,
+    query_text      VARCHAR NOT NULL,
+    status          VARCHAR NOT NULL,      -- 'running' | 'success' | 'failed'
+    started_at      TIMESTAMP NOT NULL,
+    finished_at     TIMESTAMP,
+    final_answer    VARCHAR
+);
+
+CREATE TABLE agent_step (
+    step_id         UUID PRIMARY KEY DEFAULT uuid(),
+    query_id        UUID NOT NULL REFERENCES agent_query(query_id),
+    phase           VARCHAR NOT NULL,      -- 'reason'|'plan'|'execute'|'reflect'|'synthesize'
+    step_index      INTEGER NOT NULL,      -- order within the query, 0-based
+    -- populated only for Execute-phase tool calls:
+    tool_name       VARCHAR,
+    tool_args       VARCHAR,               -- JSON-encoded
+    tool_result     VARCHAR,               -- JSON-encoded, truncated; only set on success
+    tool_success    BOOLEAN,
+    tool_error      VARCHAR,
+    summary         VARCHAR,               -- short human-readable description
+    started_at      TIMESTAMP NOT NULL,
+    finished_at     TIMESTAMP
+);
+
+CREATE TABLE agent_llm_call (
+    call_id             UUID PRIMARY KEY DEFAULT uuid(),
+    step_id             UUID NOT NULL REFERENCES agent_step(step_id),
+    model               VARCHAR NOT NULL,
+    input_tokens        INTEGER,
+    output_tokens       INTEGER,
+    cache_read_tokens   INTEGER,
+    cache_write_tokens  INTEGER,
+    cost_usd            DOUBLE,
+    called_at           TIMESTAMP NOT NULL
+);
+
+-- Rates change over time -- versioned by effective_date rather than a
+-- single mutable row, so historical cost_usd figures stay reproducible.
+CREATE TABLE agent_model_pricing (
+    model                   VARCHAR NOT NULL,
+    effective_date          DATE NOT NULL,
+    input_usd_per_mtok      DOUBLE NOT NULL,
+    output_usd_per_mtok     DOUBLE NOT NULL,
+    cache_read_usd_per_mtok  DOUBLE NOT NULL,
+    cache_write_usd_per_mtok DOUBLE NOT NULL,
+    PRIMARY KEY (model, effective_date)
+);
+
+CREATE OR REPLACE VIEW v_agent_query_cost AS
+SELECT
+    q.query_id,
+    q.user_id,
+    q.query_text,
+    q.status,
+    q.started_at,
+    q.finished_at,
+    COUNT(DISTINCT s.step_id) AS step_count,
+    COUNT(l.call_id) AS llm_call_count,
+    SUM(l.input_tokens) AS total_input_tokens,
+    SUM(l.output_tokens) AS total_output_tokens,
+    SUM(l.cost_usd) AS total_cost_usd
+FROM agent_query q
+LEFT JOIN agent_step s      ON s.query_id = q.query_id
+LEFT JOIN agent_llm_call l  ON l.step_id = s.step_id
+GROUP BY q.query_id, q.user_id, q.query_text, q.status, q.started_at, q.finished_at;
