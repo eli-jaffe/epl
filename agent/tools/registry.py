@@ -110,20 +110,14 @@ TOOL_REGISTRY: list[ToolSpec] = [
             "required": ["max_ownership_pct", "min_form"],
         },
     ),
-    ToolSpec(
-        "get_fixture_difficulty",
-        "Upcoming fixture difficulty run for one team.",
-        players.get_fixture_difficulty,
-        {
-            "type": "object",
-            "properties": {
-                "team_code": {"type": "integer", "description": "Stable FPL team_code."},
-                "gw_start": {"type": "integer", "description": "First gameweek in range, inclusive."},
-                "gw_end": {"type": "integer", "description": "Last gameweek in range, inclusive."},
-            },
-            "required": ["team_code", "gw_start", "gw_end"],
-        },
-    ),
+    # get_fixture_difficulty (single-team-per-call) deliberately removed
+    # 2026-09-20: answering "which teams" style questions needs it called
+    # once per club, and burned most of the agent loop's execute-round
+    # budget on schema rediscovery before ever reaching it -- see the known
+    # issue in docs/agent_ui_architecture_plan.md. Deferred as a v2 fixed
+    # tool (something like get_fixture_difficulty_all_teams); for now,
+    # cross-team fixture questions go through run_sql against fact_fixture
+    # directly, which the agent already reaches for as an escape hatch.
     ToolSpec(
         "get_value_analysis",
         "Points-per-million value, for one player or a whole position.",

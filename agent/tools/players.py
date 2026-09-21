@@ -174,33 +174,6 @@ def get_differentials(
         return fetch_dicts(conn, sql, params)
 
 
-def get_fixture_difficulty(team_code: int, gw_start: int, gw_end: int) -> list[dict]:
-    """Upcoming fixture difficulty run for one team, for transfer/captaincy
-    timing decisions.
-    """
-    with get_readonly_connection() as conn:
-        season = current_season_id(conn)
-        return fetch_dicts(
-            conn,
-            """
-            SELECT
-                f.gameweek,
-                (f.team_h_code = ?) AS was_home,
-                opp.name AS opponent_name,
-                opp.short_name AS opponent_short_name,
-                CASE WHEN f.team_h_code = ? THEN f.team_h_difficulty ELSE f.team_a_difficulty END AS difficulty
-            FROM fact_fixture f
-            JOIN dim_team opp
-                ON opp.team_code = CASE WHEN f.team_h_code = ? THEN f.team_a_code ELSE f.team_h_code END
-            WHERE f.season_id = ?
-              AND (f.team_h_code = ? OR f.team_a_code = ?)
-              AND f.gameweek BETWEEN ? AND ?
-            ORDER BY f.gameweek
-            """,
-            [team_code, team_code, team_code, season, team_code, team_code, gw_start, gw_end],
-        )
-
-
 def get_value_analysis(
     position: str | None = None,
     player_code: int | None = None,

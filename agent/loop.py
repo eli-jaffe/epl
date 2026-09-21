@@ -143,7 +143,12 @@ async def _execute(
                 # tool-output-truncation tip already cited elsewhere in this
                 # codebase -- only stored on success, since the failure case
                 # is already captured by tool_error.
-                tool_result=json.dumps(envelope["data"])[:2000] if envelope["success"] else None,
+                # default=str: some tool/run_sql results include datetime
+                # values straight from DuckDB, which json.dumps can't
+                # serialize by default -- found by actually running a fixture
+                # question through ask_epl_agent, 2026-09-20, where it crashed
+                # the whole query rather than just this logging call.
+                tool_result=json.dumps(envelope["data"], default=str)[:2000] if envelope["success"] else None,
                 tool_success=envelope["success"],
                 tool_error=envelope["error"],
                 summary=call_desc,
@@ -174,16 +179,21 @@ async def _reflect(query_id: uuid.UUID, query_text: str, execute_summary: str, s
     messages = [
         {"role": "user", "content": f"User question: {query_text}\n\nTool results gathered:\n{execute_summary}"}
     ]
+    # max_tokens=1024, not 256: confirmed empirically (2026-09-20) that 256
+    # truncates mid-generation on real-sized tool result summaries -- the
+    # model writes "status" before "reasoning" (schema field order), so a
+    # truncated response (stop_reason="max_tokens") comes back with "status"
+    # present but "reasoning" missing entirely, not just short.
     response = await llm.call_claude(
         system=system,
         messages=messages,
         tools=[SUBMIT_REFLECTION_TOOL],
         tool_choice={"type": "tool", "name": "submit_reflection"},
-        max_tokens=256,
+        max_tokens=1024,
     )
     tool_use = next(b for b in response.content if b.type == "tool_use")
-    status = tool_use.input["status"]
-    reasoning = tool_use.input["reasoning"]
+    status = tool_use.input.get("status", "CANNOT_ANSWER")
+    reasoning = tool_use.input.get("reasoning", "(no reasoning provided -- response was truncated)")
     step_id = await observability.log_step(query_id, "reflect", step_index, summary=f"{status}: {reasoning}")
     await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
     return status, reasoning, step_index + 1
@@ -192,23 +202,49 @@ async def _reflect(query_id: uuid.UUID, query_text: str, execute_summary: str, s
 async def _synthesize(
     query_id: uuid.UUID, query_text: str, execute_summary: str, status: str, step_index: int
 ) -> tuple[str, int]:
+    # Found empirically (2026-09-20, testing ask_epl_agent): with the
+    # reflection status folded into the same user turn as the question, the
+    # model sometimes replies to the *status* instead of the question --
+    # e.g. a bare "Session ended - reflection completed." with no actual
+    # answer, even though good tool results were available. Framing the
+    # status as an explicit internal aside (not part of the user's question)
+    # and telling the model directly not to comment on process fixes the
+    # observed cases; the retry-on-empty below is a separate backstop for
+    # the rarer case where the model returns no text block at all.
     system = (
         f"{DOMAIN_GLOSSARY}\n\nWrite the final answer to the user's fantasy "
-        "Premier League question, in plain natural language, based only on "
-        "the tool results gathered. If the results are incomplete or a tool "
-        "wasn't available, say so honestly rather than guessing or making up "
-        "numbers."
+        "Premier League question below, as if speaking directly to them. "
+        "Base it only on the tool results gathered. Do not describe your "
+        "internal process, mention 'reflection' or 'tool calls', or remark "
+        "that the session/conversation has ended -- just give the "
+        "substantive answer. If the results are incomplete or a tool wasn't "
+        "available, say what's missing as part of that answer, rather than "
+        "guessing or making up numbers."
     )
     messages = [
         {
             "role": "user",
-            "content": f"User question: {query_text}\n\nTool results gathered:\n{execute_summary}\n\nReflection status: {status}",
+            "content": (
+                f"User question: {query_text}\n\n"
+                f"Tool results gathered:\n{execute_summary}\n\n"
+                "(Internal note, not part of the user's question: an earlier "
+                f"reflection step marked these results as {status}. Do not "
+                "mention this note or its status in your answer.)"
+            ),
         }
     ]
     response = await llm.call_claude(system=system, messages=messages, max_tokens=1024)
     answer = _text_from(response)
+    if not answer.strip():
+        response = await llm.call_claude(system=system, messages=messages, max_tokens=1024)
+        answer = _text_from(response)
     step_id = await observability.log_step(query_id, "synthesize", step_index, summary=answer[:200])
     await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
+    if not answer.strip():
+        answer = (
+            "I gathered relevant data but wasn't able to generate a written "
+            "answer from it. Please try rephrasing your question."
+        )
     return answer, step_index + 1
 
 

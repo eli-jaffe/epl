@@ -305,5 +305,11 @@ python3 ingestion/load_historical.py
 ## Roadmap
 
 - [ ] Live FPL API connector for current-season/gameweek refreshes (`source = 'live_api'`)
-- [ ] LLM-driven agent for exploring the data / decision support
-- [ ] Frontend for delivering agent output, possibly via MCP
+- [~] LLM-driven agent for exploring the data / decision support (`agent/`) —
+  auth, tool layer, agent loop, observability, and an MCP server (including
+  `ask_epl_agent`, the agent-level tool) are built and verified against live
+  data; see `docs/agent_ui_architecture_plan.md` for status/known issues.
+- [~] Frontend for delivering agent output (`ui/`, SvelteKit + TypeScript) —
+  register/login + a basic chat page against `/chat` are built and verified
+  end-to-end; still needs richer UI, the on-demand dashboard, and a
+  production auth/proxy story (currently dev-only via Vite's proxy).
