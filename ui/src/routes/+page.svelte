@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { askAgent, getCurrentUser } from '$lib/api';
+	import { askAgentStreaming, getCurrentUser } from '$lib/api';
 	import { clearToken, getToken } from '$lib/auth';
 
-	type Turn = { question: string; answer: string; error?: boolean; pending?: boolean };
+	type Turn = { question: string; answer: string; error?: boolean; status?: string };
 
 	let ready = $state(false);
 	let token = $state('');
@@ -36,15 +36,17 @@
 		if (!question || asking) return;
 		query = '';
 		asking = true;
-		const turn: Turn = { question, answer: '', pending: true };
+		const turn: Turn = { question, answer: '', status: 'Thinking...' };
 		turns = [...turns, turn];
 		try {
-			turn.answer = await askAgent(question, token);
+			turn.answer = await askAgentStreaming(question, token, (msg) => {
+				turn.status = msg;
+			});
 		} catch (err) {
 			turn.answer = err instanceof Error ? err.message : 'Something went wrong.';
 			turn.error = true;
 		} finally {
-			turn.pending = false;
+			turn.status = undefined;
 			asking = false;
 		}
 	}
@@ -71,8 +73,8 @@
 			{#each turns as turn, i (i)}
 				<div class="turn">
 					<p class="question">{turn.question}</p>
-					{#if turn.pending}
-						<p class="pending">Thinking...</p>
+					{#if turn.status}
+						<p class="pending">{turn.status}</p>
 					{:else}
 						<p class="answer" class:error={turn.error}>{turn.answer}</p>
 					{/if}

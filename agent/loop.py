@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from agent import llm, observability
@@ -31,6 +32,27 @@ from agent.tools.registry import TOOL_REGISTRY, dispatch, to_claude_tools
 
 MAX_OUTER_RETRIES = 3
 MAX_EXECUTE_ROUNDS = 5
+
+# Optional per-phase status callback, threaded through run_agent_query and
+# each phase helper -- lets a caller (agent/api/chat.py's SSE endpoint)
+# surface what the loop is doing in real time. None (the default) means
+# "no one is listening" -- every existing caller (agent/mcp_server.py's
+# ask_epl_agent) is unaffected. Called right before the work each phase is
+# about to do, not after, so the message announces what's about to happen.
+OnStatus = Callable[[str], Awaitable[None]]
+
+STATUS_MESSAGES = {
+    "reason": "Thinking about your question...",
+    "plan": "Planning how to answer...",
+    "reflect": "Double-checking the results...",
+    "synthesize": "Writing your answer...",
+}
+
+
+async def _emit(on_status: OnStatus | None, message: str) -> None:
+    if on_status is not None:
+        await on_status(message)
+
 
 SUBMIT_REFLECTION_TOOL = {
     "name": "submit_reflection",
@@ -60,7 +82,14 @@ def _build_context(query_text: str, failed_calls: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-async def _reason(query_id: uuid.UUID, query_text: str, step_index: int, failed_calls: list[str]) -> tuple[str, int]:
+async def _reason(
+    query_id: uuid.UUID,
+    query_text: str,
+    step_index: int,
+    failed_calls: list[str],
+    on_status: OnStatus | None = None,
+) -> tuple[str, int]:
+    await _emit(on_status, STATUS_MESSAGES["reason"])
     system = (
         f"{DOMAIN_GLOSSARY}\n\nYou are reasoning about a fantasy Premier League "
         "question before planning how to answer it. Restate your understanding "
@@ -76,7 +105,14 @@ async def _reason(query_id: uuid.UUID, query_text: str, step_index: int, failed_
     return text, step_index + 1
 
 
-async def _plan(query_id: uuid.UUID, query_text: str, reason_text: str, step_index: int) -> tuple[str, int]:
+async def _plan(
+    query_id: uuid.UUID,
+    query_text: str,
+    reason_text: str,
+    step_index: int,
+    on_status: OnStatus | None = None,
+) -> tuple[str, int]:
+    await _emit(on_status, STATUS_MESSAGES["plan"])
     tool_names = ", ".join(t.name for t in TOOL_REGISTRY)
     system = (
         f"{DOMAIN_GLOSSARY}\n\nGiven the question and your prior reasoning, "
@@ -93,7 +129,12 @@ async def _plan(query_id: uuid.UUID, query_text: str, reason_text: str, step_ind
 
 
 async def _execute(
-    query_id: uuid.UUID, query_text: str, plan_text: str, step_index: int, failed_calls: list[str]
+    query_id: uuid.UUID,
+    query_text: str,
+    plan_text: str,
+    step_index: int,
+    failed_calls: list[str],
+    on_status: OnStatus | None = None,
 ) -> tuple[str, int]:
     system = (
         f"{DOMAIN_GLOSSARY}\n\nCall whatever tools you need to answer the "
@@ -130,6 +171,7 @@ async def _execute(
         messages.append({"role": "assistant", "content": response.content})
         tool_result_blocks = []
         for tu in tool_uses:
+            await _emit(on_status, f"Looking up {tu.name}...")
             tool_started_at = datetime.now(timezone.utc)
             envelope = await dispatch(tu.name, **tu.input)
             call_desc = f"{tu.name}({tu.input})"
@@ -177,7 +219,14 @@ async def _execute(
     return "\n".join(results_summary), step_index
 
 
-async def _reflect(query_id: uuid.UUID, query_text: str, execute_summary: str, step_index: int) -> tuple[str, str, int]:
+async def _reflect(
+    query_id: uuid.UUID,
+    query_text: str,
+    execute_summary: str,
+    step_index: int,
+    on_status: OnStatus | None = None,
+) -> tuple[str, str, int]:
+    await _emit(on_status, STATUS_MESSAGES["reflect"])
     system = (
         f"{DOMAIN_GLOSSARY}\n\nDecide whether the gathered tool results are "
         "sufficient to answer the user's question. Call submit_reflection "
@@ -208,8 +257,14 @@ async def _reflect(query_id: uuid.UUID, query_text: str, execute_summary: str, s
 
 
 async def _synthesize(
-    query_id: uuid.UUID, query_text: str, execute_summary: str, status: str, step_index: int
+    query_id: uuid.UUID,
+    query_text: str,
+    execute_summary: str,
+    status: str,
+    step_index: int,
+    on_status: OnStatus | None = None,
 ) -> tuple[str, int]:
+    await _emit(on_status, STATUS_MESSAGES["synthesize"])
     # Found empirically (2026-09-20, testing ask_epl_agent): with the
     # reflection status folded into the same user turn as the question, the
     # model sometimes replies to the *status* instead of the question --
@@ -257,7 +312,9 @@ async def _synthesize(
     return answer, step_index + 1
 
 
-async def run_agent_query(user_id: uuid.UUID, query_text: str) -> str:
+async def run_agent_query(
+    user_id: uuid.UUID, query_text: str, on_status: OnStatus | None = None
+) -> str:
     query_id = await observability.start_query(user_id, query_text)
     step_index = 0
     failed_calls: list[str] = []
@@ -266,14 +323,16 @@ async def run_agent_query(user_id: uuid.UUID, query_text: str) -> str:
 
     try:
         for _attempt in range(MAX_OUTER_RETRIES):
-            reason_text, step_index = await _reason(query_id, query_text, step_index, failed_calls)
-            plan_text, step_index = await _plan(query_id, query_text, reason_text, step_index)
-            execute_summary, step_index = await _execute(query_id, query_text, plan_text, step_index, failed_calls)
-            status, _reasoning, step_index = await _reflect(query_id, query_text, execute_summary, step_index)
+            reason_text, step_index = await _reason(query_id, query_text, step_index, failed_calls, on_status)
+            plan_text, step_index = await _plan(query_id, query_text, reason_text, step_index, on_status)
+            execute_summary, step_index = await _execute(
+                query_id, query_text, plan_text, step_index, failed_calls, on_status
+            )
+            status, _reasoning, step_index = await _reflect(query_id, query_text, execute_summary, step_index, on_status)
             if status == "SUCCESS":
                 break
 
-        answer, step_index = await _synthesize(query_id, query_text, execute_summary, status, step_index)
+        answer, step_index = await _synthesize(query_id, query_text, execute_summary, status, step_index, on_status)
         await observability.finish_query(query_id, "success" if status == "SUCCESS" else "failed", answer)
         return answer
     except Exception:

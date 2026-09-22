@@ -39,7 +39,18 @@ export async function register(email: string, password: string): Promise<void> {
 	}
 }
 
-export async function askAgent(query: string, token: string): Promise<string> {
+// /chat streams Server-Sent Events (status frames while the agent loop
+// runs, then one terminal answer/error frame) rather than returning a
+// single JSON body. We can't use the browser's native EventSource here --
+// it can't send custom headers, so it can't carry the JWT Authorization
+// header this app uses everywhere else (see ui/src/lib/auth.ts) -- so we
+// use fetch() (same pattern as every other call in this file) and parse
+// the streamed body ourselves.
+export async function askAgentStreaming(
+	query: string,
+	token: string,
+	onStatus: (message: string) => void
+): Promise<string> {
 	const response = await fetch('/chat', {
 		method: 'POST',
 		headers: {
@@ -51,8 +62,43 @@ export async function askAgent(query: string, token: string): Promise<string> {
 	if (!response.ok) {
 		throw new Error(await readErrorDetail(response));
 	}
-	const data = await response.json();
-	return data.answer as string;
+	if (!response.body) {
+		throw new Error('Streaming not supported by this browser.');
+	}
+
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+
+		// SSE frames are separated by a blank line; a frame may itself
+		// contain multiple "data: ..." lines, but this backend only ever
+		// sends one per frame.
+		let boundary = buffer.indexOf('\n\n');
+		while (boundary !== -1) {
+			const frame = buffer.slice(0, boundary);
+			buffer = buffer.slice(boundary + 2);
+			boundary = buffer.indexOf('\n\n');
+
+			const line = frame.split('\n').find((l) => l.startsWith('data: '));
+			if (!line) continue;
+			const payload = JSON.parse(line.slice('data: '.length));
+
+			if (payload.type === 'status') {
+				onStatus(payload.message as string);
+			} else if (payload.type === 'answer') {
+				return payload.answer as string;
+			} else if (payload.type === 'error') {
+				throw new Error(payload.message as string);
+			}
+		}
+	}
+
+	throw new Error('Stream ended without an answer.');
 }
 
 export type CurrentUser = {
