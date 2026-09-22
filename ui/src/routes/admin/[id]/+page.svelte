@@ -45,7 +45,7 @@
 			// query -- and on unmount if you navigate away first.
 			pollHandle = setInterval(async () => {
 				if (detail?.status === 'running') {
-					await load();
+					await load(true);
 				} else if (pollHandle) {
 					clearInterval(pollHandle);
 					pollHandle = null;
@@ -58,20 +58,27 @@
 		if (pollHandle) clearInterval(pollHandle);
 	});
 
-	async function load() {
+	async function load(isBackground = false) {
 		const queryId = page.params.id;
 		if (!queryId) {
 			error = 'No query id in URL.';
 			return;
 		}
-		loading = true;
+		if (!isBackground) loading = true;
 		error = null;
 		try {
-			detail = await getAdminQueryDetail(token, queryId);
+			const next = await getAdminQueryDetail(token, queryId);
+			// Background polls that return the same data shouldn't touch
+			// reactive state at all -- reassigning here (even to an
+			// effectively-equal object) would re-render the whole section and
+			// reintroduce the flash this function exists to avoid.
+			if (JSON.stringify(next) !== JSON.stringify(detail)) {
+				detail = next;
+			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong.';
 		} finally {
-			loading = false;
+			if (!isBackground) loading = false;
 		}
 	}
 
@@ -309,6 +316,10 @@
 		border-radius: 0.2rem;
 		cursor: pointer;
 		min-width: 2px;
+		transition:
+			left 0.3s ease,
+			width 0.3s ease,
+			background 0.3s ease;
 	}
 	.bar:hover {
 		filter: brightness(0.9);
