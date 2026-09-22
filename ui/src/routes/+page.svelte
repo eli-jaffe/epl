@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { askAgent, getCurrentUser } from '$lib/api';
+	import { askAgentStreaming, getCurrentUser } from '$lib/api';
 	import { clearToken, getToken } from '$lib/auth';
 
-	type Turn = { question: string; answer: string; error?: boolean; pending?: boolean };
+	type Turn = { question: string; answer: string; error?: boolean; status?: string };
 
 	let ready = $state(false);
 	let token = $state('');
@@ -36,20 +36,24 @@
 		if (!question || asking) return;
 		query = '';
 		asking = true;
-		turns = [...turns, { question, answer: '', pending: true }];
-		// Mutate through turns[index], not a captured object reference -- Svelte
+		turns = [...turns, { question, answer: '', status: 'Thinking...' }];
+		// Mutate through turns[index], not a captured `turn` reference -- Svelte
 		// 5's $state deep-reactivity proxies the array's contents at the time
-		// `turns` is reassigned, so a plain reference held from before that
-		// assignment is not the same object as the reactive proxy Svelte tracks;
-		// mutating it silently updates the data but never triggers a re-render.
+		// `turns` is reassigned, so a plain object reference held from before
+		// that assignment is NOT the same object as the reactive proxy Svelte
+		// tracks; mutating it silently updates the underlying data but never
+		// triggers a re-render. Found empirically: the UI froze on "Thinking..."
+		// and never showed the final answer.
 		const index = turns.length - 1;
 		try {
-			turns[index].answer = await askAgent(question, token);
+			turns[index].answer = await askAgentStreaming(question, token, (msg) => {
+				turns[index].status = msg;
+			});
 		} catch (err) {
 			turns[index].answer = err instanceof Error ? err.message : 'Something went wrong.';
 			turns[index].error = true;
 		} finally {
-			turns[index].pending = false;
+			turns[index].status = undefined;
 			asking = false;
 		}
 	}
@@ -76,8 +80,8 @@
 			{#each turns as turn, i (i)}
 				<div class="turn">
 					<p class="question">{turn.question}</p>
-					{#if turn.pending}
-						<p class="pending">Thinking...</p>
+					{#if turn.status}
+						<p class="pending">{turn.status}</p>
 					{:else}
 						<p class="answer" class:error={turn.error}>{turn.answer}</p>
 					{/if}
