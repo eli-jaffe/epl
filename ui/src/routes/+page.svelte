@@ -36,17 +36,24 @@
 		if (!question || asking) return;
 		query = '';
 		asking = true;
-		const turn: Turn = { question, answer: '', status: 'Thinking...' };
-		turns = [...turns, turn];
+		turns = [...turns, { question, answer: '', status: 'Thinking...' }];
+		// Mutate through turns[index], not a captured `turn` reference -- Svelte
+		// 5's $state deep-reactivity proxies the array's contents at the time
+		// `turns` is reassigned, so a plain object reference held from before
+		// that assignment is NOT the same object as the reactive proxy Svelte
+		// tracks; mutating it silently updates the underlying data but never
+		// triggers a re-render. Found empirically: the UI froze on "Thinking..."
+		// and never showed the final answer.
+		const index = turns.length - 1;
 		try {
-			turn.answer = await askAgentStreaming(question, token, (msg) => {
-				turn.status = msg;
+			turns[index].answer = await askAgentStreaming(question, token, (msg) => {
+				turns[index].status = msg;
 			});
 		} catch (err) {
-			turn.answer = err instanceof Error ? err.message : 'Something went wrong.';
-			turn.error = true;
+			turns[index].answer = err instanceof Error ? err.message : 'Something went wrong.';
+			turns[index].error = true;
 		} finally {
-			turn.status = undefined;
+			turns[index].status = undefined;
 			asking = false;
 		}
 	}
