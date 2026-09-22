@@ -48,6 +48,26 @@ STATUS_MESSAGES = {
     "synthesize": "Writing your answer...",
 }
 
+# Per-tool status phrases for the execute-phase streaming status line, keyed
+# by name against agent/tools/registry.py's TOOL_REGISTRY -- friendlier than
+# the raw tool name for a fantasy-football user watching the status line.
+# Deliberately covers only the tools that exist today: _execute's lookup
+# below falls back to the old raw-name phrasing for anything not in this
+# dict, so a future tool added to TOOL_REGISTRY without a matching entry
+# here degrades to something functional (if unpolished) instead of
+# emitting None or erroring.
+TOOL_STATUS_MESSAGES = {
+    "search_players": "Searching for players...",
+    "get_player_summary": "Looking up player stats...",
+    "get_player_gameweek_history": "Pulling gameweek history...",
+    "compare_players": "Comparing players...",
+    "get_top_performers": "Finding top performers...",
+    "get_differentials": "Finding differential picks...",
+    "get_value_analysis": "Analyzing value for money...",
+    "get_schema": "Checking the data...",
+    "run_sql": "Running a custom data query...",
+}
+
 
 async def _emit(on_status: OnStatus | None, message: str) -> None:
     if on_status is not None:
@@ -171,7 +191,7 @@ async def _execute(
         messages.append({"role": "assistant", "content": response.content})
         tool_result_blocks = []
         for tu in tool_uses:
-            await _emit(on_status, f"Looking up {tu.name}...")
+            await _emit(on_status, TOOL_STATUS_MESSAGES.get(tu.name, f"Looking up {tu.name}..."))
             tool_started_at = datetime.now(timezone.utc)
             envelope = await dispatch(tu.name, **tu.input)
             call_desc = f"{tu.name}({tu.input})"
