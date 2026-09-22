@@ -101,6 +101,24 @@ export async function askAgentStreaming(
 	throw new Error('Stream ended without an answer.');
 }
 
+export type HistoryEntry = {
+	query_id: string;
+	query_text: string;
+	final_answer: string | null;
+	status: string;
+	started_at: string;
+};
+
+export async function getChatHistory(token: string): Promise<HistoryEntry[]> {
+	const response = await fetch('/chat/history', {
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	if (!response.ok) {
+		throw new Error(await readErrorDetail(response));
+	}
+	return (await response.json()) as HistoryEntry[];
+}
+
 export type CurrentUser = {
 	id: string;
 	email: string;

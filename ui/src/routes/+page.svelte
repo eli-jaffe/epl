@@ -1,16 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { askAgentStreaming, getCurrentUser } from '$lib/api';
+	import { askAgentStreaming, getChatHistory, getCurrentUser } from '$lib/api';
 	import { clearToken, getToken } from '$lib/auth';
 
 	type Turn = { question: string; answer: string; error?: boolean; status?: string };
+	type HistoryTurn = Turn & { expanded: boolean };
 
 	let ready = $state(false);
 	let token = $state('');
 	let query = $state('');
 	let asking = $state(false);
 	let turns: Turn[] = $state([]);
+	let history: HistoryTurn[] = $state([]);
 	let isSuperuser = $state(false);
 
 	onMount(() => {
@@ -28,7 +30,25 @@
 				isSuperuser = user.is_superuser;
 			})
 			.catch(() => {});
+		// Past chats render in their own collapsed-by-default "Previous chats"
+		// section, separate from the live conversation below -- newest-first
+		// (the endpoint's native order), each one collapsed until clicked so
+		// the page opens showing just the input, not a wall of old answers.
+		getChatHistory(stored)
+			.then((entries) => {
+				history = entries.map((entry) => ({
+					question: entry.query_text,
+					answer: entry.final_answer ?? '(no answer recorded)',
+					error: entry.status === 'failed',
+					expanded: false
+				}));
+			})
+			.catch(() => {});
 	});
+
+	function toggleHistory(index: number) {
+		history[index].expanded = !history[index].expanded;
+	}
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
@@ -75,6 +95,28 @@
 				<button type="button" class="link" onclick={logout}>Log out</button>
 			</div>
 		</header>
+
+		{#if history.length > 0}
+			<section class="history">
+				<h2>Previous chats</h2>
+				{#each history as entry, i (i)}
+					<div class="history-item">
+						<button
+							type="button"
+							class="history-question"
+							onclick={() => toggleHistory(i)}
+							aria-expanded={entry.expanded}
+						>
+							<span class="chevron" class:open={entry.expanded}>&#9656;</span>
+							{entry.question}
+						</button>
+						{#if entry.expanded}
+							<p class="answer" class:error={entry.error}>{entry.answer}</p>
+						{/if}
+					</div>
+				{/each}
+			</section>
+		{/if}
 
 		<div class="turns">
 			{#each turns as turn, i (i)}
@@ -128,6 +170,50 @@
 	}
 	.header-actions a:hover {
 		text-decoration: underline;
+	}
+	.history {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		border-bottom: 1px solid #e0e0e0;
+		padding-bottom: 0.75rem;
+	}
+	.history h2 {
+		font-size: 0.85rem;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		color: #888;
+		margin: 0 0 0.25rem;
+	}
+	.history-item {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+	}
+	.history-question {
+		display: flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		background: none;
+		border: none;
+		text-align: left;
+		font: inherit;
+		font-weight: 600;
+		color: inherit;
+		cursor: pointer;
+		padding: 0.3rem 0;
+	}
+	.chevron {
+		display: inline-block;
+		font-size: 0.75rem;
+		color: #888;
+		transition: transform 0.15s ease;
+	}
+	.chevron.open {
+		transform: rotate(90deg);
+	}
+	.history-item .answer {
+		margin: 0 0 0.4rem 1.1rem;
 	}
 	.turns {
 		flex: 1;

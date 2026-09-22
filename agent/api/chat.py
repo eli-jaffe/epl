@@ -13,13 +13,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.auth.models import User
 from agent.auth.users import current_active_user
+from agent.db.observability_models import AgentQuery
+from agent.db.postgres import get_async_session
 from agent.loop import run_agent_query
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -27,6 +33,14 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 class ChatRequest(BaseModel):
     query: str
+
+
+class HistoryEntry(BaseModel):
+    query_id: uuid.UUID
+    query_text: str
+    final_answer: str | None
+    status: str
+    started_at: datetime
 
 
 def _sse(payload: dict) -> str:
@@ -76,3 +90,31 @@ async def chat(request: ChatRequest, user: User = Depends(current_active_user)) 
         _stream_answer(user.id, request.query),
         media_type="text/event-stream",
     )
+
+
+@router.get("/history", response_model=list[HistoryEntry])
+async def get_history(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+) -> list[HistoryEntry]:
+    # Own-history only (no admin gate) -- filtered to this user's rows and
+    # excludes `running` so a stale/orphaned row from a crashed session
+    # never shows as permanently "in progress" (see the plan's Out of
+    # scope note; no resume-in-progress-query flow is built).
+    stmt = (
+        select(AgentQuery)
+        .where(AgentQuery.user_id == user.id, AgentQuery.status != "running")
+        .order_by(AgentQuery.started_at.desc())
+        .limit(20)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [
+        HistoryEntry(
+            query_id=q.query_id,
+            query_text=q.query_text,
+            final_answer=q.final_answer,
+            status=q.status,
+            started_at=q.started_at,
+        )
+        for q in rows
+    ]
