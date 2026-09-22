@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { getAdminQueryDetail, getCurrentUser, type QueryDetail, type Step } from '$lib/api';
@@ -20,6 +20,7 @@
 	let error: string | null = $state(null);
 	let detail: QueryDetail | null = $state(null);
 	let expandedStepId: string | null = $state(null);
+	let pollHandle: ReturnType<typeof setInterval> | null = null;
 
 	onMount(async () => {
 		const stored = getToken();
@@ -37,7 +38,24 @@
 		ready = true;
 		if (authorized) {
 			await load();
+			// Poll while the query is still running, so the waterfall fills in
+			// as the agent moves through steps instead of only updating on the
+			// next manual visit to this page. Stops on its own once the query
+			// resolves (success/failed) -- no reason to keep polling a finished
+			// query -- and on unmount if you navigate away first.
+			pollHandle = setInterval(async () => {
+				if (detail?.status === 'running') {
+					await load();
+				} else if (pollHandle) {
+					clearInterval(pollHandle);
+					pollHandle = null;
+				}
+			}, 1000);
 		}
+	});
+
+	onDestroy(() => {
+		if (pollHandle) clearInterval(pollHandle);
 	});
 
 	async function load() {
