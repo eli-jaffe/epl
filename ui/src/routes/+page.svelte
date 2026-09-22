@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { askAgent } from '$lib/api';
+	import { askAgent, getCurrentUser } from '$lib/api';
 	import { clearToken, getToken } from '$lib/auth';
 
 	type Turn = { question: string; answer: string; error?: boolean; pending?: boolean };
@@ -11,6 +11,7 @@
 	let query = $state('');
 	let asking = $state(false);
 	let turns: Turn[] = $state([]);
+	let isSuperuser = $state(false);
 
 	onMount(() => {
 		const stored = getToken();
@@ -20,6 +21,13 @@
 		}
 		token = stored;
 		ready = true;
+		// Best-effort: an Admin link is UX only, the API enforces the real
+		// boundary -- so a failure here just means no link, not a crash.
+		getCurrentUser(stored)
+			.then((user) => {
+				isSuperuser = user.is_superuser;
+			})
+			.catch(() => {});
 	});
 
 	async function submit(event: SubmitEvent) {
@@ -51,7 +59,12 @@
 	<main>
 		<header>
 			<h1>EPL Fantasy Agent</h1>
-			<button type="button" class="link" onclick={logout}>Log out</button>
+			<div class="header-actions">
+				{#if isSuperuser}
+					<a href="/admin">Admin</a>
+				{/if}
+				<button type="button" class="link" onclick={logout}>Log out</button>
+			</div>
 		</header>
 
 		<div class="turns">
@@ -93,6 +106,19 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+	}
+	.header-actions {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+	}
+	.header-actions a {
+		color: #0060df;
+		text-decoration: none;
+		font-size: 0.9rem;
+	}
+	.header-actions a:hover {
+		text-decoration: underline;
 	}
 	.turns {
 		flex: 1;

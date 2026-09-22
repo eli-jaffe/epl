@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 from agent import llm, observability
 from agent.glossary import DOMAIN_GLOSSARY
@@ -67,9 +68,10 @@ async def _reason(query_id: uuid.UUID, query_text: str, step_index: int, failed_
         "Do not answer the question yet."
     )
     messages = [{"role": "user", "content": _build_context(query_text, failed_calls)}]
+    started_at = datetime.now(timezone.utc)
     response = await llm.call_claude(system=system, messages=messages, max_tokens=512)
     text = _text_from(response)
-    step_id = await observability.log_step(query_id, "reason", step_index, summary=text)
+    step_id = await observability.log_step(query_id, "reason", step_index, started_at, summary=text)
     await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
     return text, step_index + 1
 
@@ -82,9 +84,10 @@ async def _plan(query_id: uuid.UUID, query_text: str, reason_text: str, step_ind
         f"sentences. Available tools: {tool_names}. Do not call any tools yet."
     )
     messages = [{"role": "user", "content": f"User question: {query_text}\n\nYour reasoning: {reason_text}"}]
+    started_at = datetime.now(timezone.utc)
     response = await llm.call_claude(system=system, messages=messages, max_tokens=512)
     text = _text_from(response)
-    step_id = await observability.log_step(query_id, "plan", step_index, summary=text)
+    step_id = await observability.log_step(query_id, "plan", step_index, started_at, summary=text)
     await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
     return text, step_index + 1
 
@@ -106,6 +109,7 @@ async def _execute(
     results_summary: list[str] = []
 
     for round_num in range(MAX_EXECUTE_ROUNDS):
+        round_started_at = datetime.now(timezone.utc)
         response = await llm.call_claude(system=system, messages=messages, tools=tools, max_tokens=1024)
         tool_uses = [b for b in response.content if b.type == "tool_use"]
 
@@ -113,6 +117,7 @@ async def _execute(
             query_id,
             "execute",
             step_index,
+            round_started_at,
             summary=f"round {round_num}: {'requested ' + str(len(tool_uses)) + ' tool call(s)' if tool_uses else 'stopped requesting tools'}",
         )
         await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
@@ -125,6 +130,7 @@ async def _execute(
         messages.append({"role": "assistant", "content": response.content})
         tool_result_blocks = []
         for tu in tool_uses:
+            tool_started_at = datetime.now(timezone.utc)
             envelope = await dispatch(tu.name, **tu.input)
             call_desc = f"{tu.name}({tu.input})"
             if envelope["success"]:
@@ -137,6 +143,7 @@ async def _execute(
                 query_id,
                 "execute",
                 step_index,
+                tool_started_at,
                 tool_name=tu.name,
                 tool_args=tu.input,
                 # Truncated to bound row size, matching the USMNT reference's
@@ -184,6 +191,7 @@ async def _reflect(query_id: uuid.UUID, query_text: str, execute_summary: str, s
     # model writes "status" before "reasoning" (schema field order), so a
     # truncated response (stop_reason="max_tokens") comes back with "status"
     # present but "reasoning" missing entirely, not just short.
+    started_at = datetime.now(timezone.utc)
     response = await llm.call_claude(
         system=system,
         messages=messages,
@@ -194,7 +202,7 @@ async def _reflect(query_id: uuid.UUID, query_text: str, execute_summary: str, s
     tool_use = next(b for b in response.content if b.type == "tool_use")
     status = tool_use.input.get("status", "CANNOT_ANSWER")
     reasoning = tool_use.input.get("reasoning", "(no reasoning provided -- response was truncated)")
-    step_id = await observability.log_step(query_id, "reflect", step_index, summary=f"{status}: {reasoning}")
+    step_id = await observability.log_step(query_id, "reflect", step_index, started_at, summary=f"{status}: {reasoning}")
     await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
     return status, reasoning, step_index + 1
 
@@ -233,12 +241,13 @@ async def _synthesize(
             ),
         }
     ]
+    started_at = datetime.now(timezone.utc)
     response = await llm.call_claude(system=system, messages=messages, max_tokens=1024)
     answer = _text_from(response)
     if not answer.strip():
         response = await llm.call_claude(system=system, messages=messages, max_tokens=1024)
         answer = _text_from(response)
-    step_id = await observability.log_step(query_id, "synthesize", step_index, summary=answer[:200])
+    step_id = await observability.log_step(query_id, "synthesize", step_index, started_at, summary=answer[:200])
     await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
     if not answer.strip():
         answer = (

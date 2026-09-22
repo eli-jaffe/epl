@@ -25,7 +25,13 @@ export default defineConfig({
 		proxy: {
 			'/auth': 'http://localhost:8000',
 			'/chat': 'http://localhost:8000',
-			'/users': 'http://localhost:8000'
+			'/users': 'http://localhost:8000',
+			// Scoped to the backend's actual route prefix (/admin/queries...),
+			// not bare /admin -- the frontend also owns /admin and /admin/[id]
+			// as page routes (ui/src/routes/admin/), and a bare '/admin' proxy
+			// key would shadow those, intercepting even a plain page load
+			// before SvelteKit's router ever sees it.
+			'/admin/queries': 'http://localhost:8000'
 		}
 	}
 });
