@@ -48,6 +48,7 @@ async def log_step(
     query_id: uuid.UUID,
     phase: str,
     step_index: int,
+    started_at: datetime,
     *,
     tool_name: str | None = None,
     tool_args: dict | None = None,
@@ -57,7 +58,6 @@ async def log_step(
     summary: str | None = None,
 ) -> uuid.UUID:
     step_id = uuid.uuid4()
-    now = _now()
     async with async_session_maker() as session:
         session.add(
             AgentStep(
@@ -71,8 +71,8 @@ async def log_step(
                 tool_success=tool_success,
                 tool_error=tool_error,
                 summary=summary,
-                started_at=now,
-                finished_at=now,
+                started_at=started_at,
+                finished_at=_now(),
             )
         )
         await session.commit()

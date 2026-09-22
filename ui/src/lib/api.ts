@@ -54,3 +54,103 @@ export async function askAgent(query: string, token: string): Promise<string> {
 	const data = await response.json();
 	return data.answer as string;
 }
+
+export type CurrentUser = {
+	id: string;
+	email: string;
+	is_active: boolean;
+	is_superuser: boolean;
+	is_verified: boolean;
+};
+
+export async function getCurrentUser(token: string): Promise<CurrentUser> {
+	const response = await fetch('/users/me', {
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	if (!response.ok) {
+		throw new Error(await readErrorDetail(response));
+	}
+	return (await response.json()) as CurrentUser;
+}
+
+export type QuerySummary = {
+	query_id: string;
+	user_email: string;
+	query_text: string;
+	status: string;
+	started_at: string;
+	duration_ms: number | null;
+};
+
+export type AdminQueryFilters = {
+	limit?: number;
+	offset?: number;
+	status?: string;
+	user_email?: string;
+};
+
+export async function listAdminQueries(
+	token: string,
+	filters: AdminQueryFilters = {}
+): Promise<QuerySummary[]> {
+	const params = new URLSearchParams();
+	if (filters.limit !== undefined) params.set('limit', String(filters.limit));
+	if (filters.offset !== undefined) params.set('offset', String(filters.offset));
+	if (filters.status) params.set('status', filters.status);
+	if (filters.user_email) params.set('user_email', filters.user_email);
+	const qs = params.toString();
+	const response = await fetch(`/admin/queries${qs ? `?${qs}` : ''}`, {
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	if (!response.ok) {
+		throw new Error(await readErrorDetail(response));
+	}
+	return (await response.json()) as QuerySummary[];
+}
+
+export type LlmCall = {
+	call_id: string;
+	model: string;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	cache_read_tokens: number | null;
+	cache_write_tokens: number | null;
+};
+
+export type Step = {
+	step_id: string;
+	phase: string;
+	step_index: number;
+	tool_name: string | null;
+	tool_args: Record<string, unknown> | null;
+	tool_result: string | null;
+	tool_success: boolean | null;
+	tool_error: string | null;
+	summary: string | null;
+	started_at: string;
+	finished_at: string | null;
+	duration_ms: number | null;
+	llm_calls: LlmCall[];
+};
+
+export type QueryDetail = {
+	query_id: string;
+	user_email: string;
+	query_text: string;
+	status: string;
+	final_answer: string | null;
+	started_at: string;
+	finished_at: string | null;
+	duration_ms: number | null;
+	steps: Step[];
+};
+
+export async function getAdminQueryDetail(token: string, queryId: string): Promise<QueryDetail> {
+	const response = await fetch(`/admin/queries/${queryId}`, {
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	if (!response.ok) {
+		throw new Error(await readErrorDetail(response));
+	}
+	return (await response.json()) as QueryDetail;
+}
