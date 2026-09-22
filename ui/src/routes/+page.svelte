@@ -4,7 +4,7 @@
 	import { askAgent } from '$lib/api';
 	import { clearToken, getToken } from '$lib/auth';
 
-	type Turn = { question: string; answer: string; error?: boolean };
+	type Turn = { question: string; answer: string; error?: boolean; pending?: boolean };
 
 	let ready = $state(false);
 	let token = $state('');
@@ -28,13 +28,15 @@
 		if (!question || asking) return;
 		query = '';
 		asking = true;
+		const turn: Turn = { question, answer: '', pending: true };
+		turns = [...turns, turn];
 		try {
-			const answer = await askAgent(question, token);
-			turns = [...turns, { question, answer }];
+			turn.answer = await askAgent(question, token);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : 'Something went wrong.';
-			turns = [...turns, { question, answer: message, error: true }];
+			turn.answer = err instanceof Error ? err.message : 'Something went wrong.';
+			turn.error = true;
 		} finally {
+			turn.pending = false;
 			asking = false;
 		}
 	}
@@ -53,15 +55,16 @@
 		</header>
 
 		<div class="turns">
-			{#each turns as turn (turn.question + turn.answer)}
+			{#each turns as turn, i (i)}
 				<div class="turn">
 					<p class="question">{turn.question}</p>
-					<p class="answer" class:error={turn.error}>{turn.answer}</p>
+					{#if turn.pending}
+						<p class="pending">Thinking...</p>
+					{:else}
+						<p class="answer" class:error={turn.error}>{turn.answer}</p>
+					{/if}
 				</div>
 			{/each}
-			{#if asking}
-				<p class="pending">Thinking...</p>
-			{/if}
 		</div>
 
 		<form onsubmit={submit}>

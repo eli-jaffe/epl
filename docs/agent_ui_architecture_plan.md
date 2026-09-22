@@ -72,6 +72,17 @@ browser-automation tool is connected to this environment yet).
   claims no fixture data exists at all. Candidate v2 fixes: cache schema
   across rounds/retries, carry forward partial tool results on retry,
   and/or a multi-team `get_fixture_difficulty_all_teams` fixed tool.
+- **`agent_step.started_at`/`finished_at` are always identical, found
+  2026-09-22** — `observability.log_step()` (`agent/observability.py`)
+  computes a single `now = _now()` and assigns it to both columns on the
+  same `AgentStep` row, so per-step duration can never be recovered from the
+  trace. Query-level timing still works (`agent_query.started_at`/
+  `finished_at` give real end-to-end wall-clock latency), and turn count is
+  unaffected (`agent_step.step_index`/`COUNT(*)` per `query_id` is accurate)
+  — only per-phase/per-tool-call duration is the gap. Fix: capture a real
+  start timestamp before each step's work begins (reason/plan/execute/
+  reflect/synthesize call sites in `agent/loop.py`) and pass it into
+  `log_step()` instead of stamping both fields at write time.
 - Three `agent/loop.py` bugs found and fixed while building `ask_epl_agent`
   (2026-09-20) are worth knowing about even though they're resolved:
   `_synthesize` could answer the internal reflection status instead of the
