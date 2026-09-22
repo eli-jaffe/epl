@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { askAgentStreaming, getCurrentUser } from '$lib/api';
+	import { askAgentStreaming, getChatHistory, getCurrentUser } from '$lib/api';
 	import { clearToken, getToken } from '$lib/auth';
 
 	type Turn = { question: string; answer: string; error?: boolean; status?: string };
@@ -26,6 +26,22 @@
 		getCurrentUser(stored)
 			.then((user) => {
 				isSuperuser = user.is_superuser;
+			})
+			.catch(() => {});
+		// Seed past turns from server-stored history before anything the user
+		// asks this session gets appended, so history reads top-to-bottom in
+		// the order it actually happened. The endpoint returns newest-first;
+		// reverse to oldest-first for display order.
+		getChatHistory(stored)
+			.then((history) => {
+				turns = [
+					...history.reverse().map((entry) => ({
+						question: entry.query_text,
+						answer: entry.final_answer ?? '(no answer recorded)',
+						error: entry.status === 'failed'
+					})),
+					...turns
+				];
 			})
 			.catch(() => {});
 	});
