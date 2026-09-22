@@ -36,15 +36,20 @@
 		if (!question || asking) return;
 		query = '';
 		asking = true;
-		const turn: Turn = { question, answer: '', pending: true };
-		turns = [...turns, turn];
+		turns = [...turns, { question, answer: '', pending: true }];
+		// Mutate through turns[index], not a captured object reference -- Svelte
+		// 5's $state deep-reactivity proxies the array's contents at the time
+		// `turns` is reassigned, so a plain reference held from before that
+		// assignment is not the same object as the reactive proxy Svelte tracks;
+		// mutating it silently updates the data but never triggers a re-render.
+		const index = turns.length - 1;
 		try {
-			turn.answer = await askAgent(question, token);
+			turns[index].answer = await askAgent(question, token);
 		} catch (err) {
-			turn.answer = err instanceof Error ? err.message : 'Something went wrong.';
-			turn.error = true;
+			turns[index].answer = err instanceof Error ? err.message : 'Something went wrong.';
+			turns[index].error = true;
 		} finally {
-			turn.pending = false;
+			turns[index].pending = false;
 			asking = false;
 		}
 	}
