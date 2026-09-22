@@ -11,24 +11,31 @@ differentials). Three components, in build order:
 1. **Data** (built) — historical player/team/fixture data in a DuckDB
    warehouse, refreshed periodically. Live in-season data is planned but not
    built.
-2. **Agent** (not built) — takes a user query, pulls the relevant data, runs
-   the appropriate analysis, visualizes it, and returns an insight. Will also
-   be able to spin up an on-demand dashboard UI for the user to explore the
-   underlying data further. The agent should work from a fixed framework for
-   *how* to pull data and *how* to visualize it, plus a scaffold for what the
-   on-demand dashboard looks like — it determines the data/analysis specifics
-   per query but isn't reinventing that output architecture from scratch each
-   time.
-3. **UI** (not built) — the on-demand dashboard from component 2 comes first;
-   a persistent entry-point web UI is a later, secondary goal.
+2. **Agent** (`agent/`, in progress) — takes a user query, pulls the relevant
+   data, runs the appropriate analysis, visualizes it, and returns an
+   insight. Will also be able to spin up an on-demand dashboard UI for the
+   user to explore the underlying data further. The agent should work from a
+   fixed framework for *how* to pull data and *how* to visualize it, plus a
+   scaffold for what the on-demand dashboard looks like — it determines the
+   data/analysis specifics per query but isn't reinventing that output
+   architecture from scratch each time. Auth, the tool layer, the agent loop,
+   observability, and an MCP server are built; chart/dashboard generation
+   isn't yet. Status/known issues: `docs/agent_ui_architecture_plan.md`.
+3. **UI** (`ui/`, in progress) — the on-demand dashboard from component 2
+   comes first; a persistent entry-point web UI is a later, secondary goal.
+   A minimal chat-first frontend (register/login + ask-the-agent) is built;
+   the on-demand dashboard isn't. See "Running the app locally" below.
 
 All three are expected to live in this repo, in directories added as each
 component is built (e.g. `ingestion/` today, `agent/` and `ui/` later) — this
 is not a split-repo setup like `epl-data` (below).
 
-Primary language is Python. Tooling for the agent/UI layers (frameworks,
-frontend stack, etc.) is not yet decided — don't assume a choice has been
-made.
+Primary language is Python for the data/agent layers. The agent backend
+(`agent/`) is FastAPI + `fastapi-users` (self-hosted Postgres for
+auth/app-state) + the Claude API, with an MCP server alongside it. The
+frontend (`ui/`) is SvelteKit + TypeScript + npm, calling the backend over
+HTTP. Chart/dashboard tooling for the on-demand dashboard is still undecided
+— ask before assuming a choice there.
 
 ## Repo split: code vs. data
 
@@ -71,13 +78,40 @@ These are non-obvious and have already caused bugs once:
   the earliest `teams.csv` on file) and load with a `NULL` team reference by
   design — not a bug to "fix" by dropping rows.
 
+## Running the app locally
+
+Nothing runs by default — start these manually, and stop them when done
+(`kill` the uvicorn/node processes, or Ctrl-C in their terminals) rather
+than leaving them running across sessions.
+
+1. **Postgres** (auth + app-state; native Homebrew install, no Docker on
+   this machine): `brew services start postgresql@16` if not already
+   running — check with `pg_isready -h localhost -p 5432`.
+2. **Agent backend** (FastAPI, from the repo root, with the venv active):
+   ```
+   source venv/bin/activate
+   uvicorn agent.main:app --port 8000
+   ```
+   Requires `.env` (copy from `.env.example` if missing) with a real
+   `ANTHROPIC_API_KEY` — without it, the agent loop's Claude API calls fail.
+   Health check: `curl http://localhost:8000/health`.
+3. **Frontend** (SvelteKit, from `ui/`): `npm run dev` — serves on
+   `http://localhost:5173` and dev-proxies `/auth`, `/chat`, `/users` to the
+   backend on `:8000` (see `ui/vite.config.ts`), so the backend must already
+   be running first. No separate build step needed for local dev.
+4. **MCP server** (for an MCP client like Claude Code/Claude Desktop, not
+   run standalone in a terminal): point the client's MCP config at
+   `python -m agent.mcp_server` (repo root, venv active) — it uses stdio
+   transport, so the client spawns and owns the process itself.
+
 ## Conventions
 
 - Keep it simple: prefer simple solutions that work instead of overly engineered
   designs.
 - No test suite or linter is configured yet — don't assume `pytest`/`ruff`
-  exist; check before referencing them, and ask before adding new tooling
-  choices for the agent/UI layers rather than assuming a stack.
+  exist; check before referencing them. The agent/UI stack itself is decided
+  (see above), but ask before assuming a choice for anything still open
+  (e.g. chart/dashboard tooling) rather than picking one.
 - `venv/` and `db/*.duckdb` are gitignored; don't commit either.
 - Match the existing style in `db/schema.sql` and `ingestion/*.py`: header
   comments explain *why* a grain/key choice was made, not what the SQL/code
