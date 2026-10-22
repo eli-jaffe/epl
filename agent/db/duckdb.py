@@ -39,15 +39,30 @@ def get_readonly_connection() -> duckdb.DuckDBPyConnection:
     """Open a fresh read-only connection. Callers are responsible for
     closing it (e.g. via `with get_readonly_connection() as conn:`).
     """
+    # A missing file and a write-lock conflict both surface as the same
+    # duckdb.IOException, so the retry loop below can't tell them apart --
+    # and retrying a missing file just burns ~1.5s before blaming the sync
+    # job. Found 2026-10-22: db/*.duckdb is gitignored, so a git worktree has
+    # no warehouse file, and every tool call failed with the misleading
+    # "sync job mid-write" message.
+    path = settings.duckdb_path
+    if not path.exists():
+        raise FileNotFoundError(
+            f"DuckDB warehouse not found at {path}. db/*.duckdb is gitignored, so a "
+            "fresh checkout or git worktree won't have it -- symlink it from the main "
+            "checkout or set DUCKDB_PATH."
+        )
+
     last_err: Exception | None = None
     for _attempt in range(MAX_CONNECT_ATTEMPTS):
         try:
-            return duckdb.connect(str(settings.duckdb_path), read_only=True)
+            return duckdb.connect(str(path), read_only=True)
         except duckdb.IOException as e:
             last_err = e
             time.sleep(RETRY_DELAY_SECONDS)
     raise RuntimeError(
         f"Could not open a read-only DuckDB connection after {MAX_CONNECT_ATTEMPTS} "
-        "attempts -- the periodic observability sync job was likely mid-write. "
-        "This should be rare (~seconds, every ~15 minutes)."
+        f"attempts ({last_err}). If this is a lock conflict, the periodic "
+        "observability sync job was likely mid-write; that should be rare "
+        "(~seconds, every ~15 minutes)."
     ) from last_err
