@@ -32,6 +32,9 @@ from agent.tools.registry import TOOL_REGISTRY, dispatch, to_claude_tools
 
 MAX_OUTER_RETRIES = 3
 MAX_EXECUTE_ROUNDS = 5
+# Final answers can include tables/ASCII charts; 1024 truncated a top-15 table
+# mid-row (2026-10-22), so give synthesis real headroom.
+SYNTHESIZE_MAX_TOKENS = 4096
 
 # Optional per-phase status callback, threaded through run_agent_query and
 # each phase helper -- lets a caller (agent/api/chat.py's SSE endpoint)
@@ -118,7 +121,7 @@ async def _reason(
     )
     messages = [{"role": "user", "content": _build_context(query_text, failed_calls)}]
     started_at = datetime.now(timezone.utc)
-    response = await llm.call_claude(system=system, messages=messages, max_tokens=512)
+    response = await llm.call_claude(system=system, messages=messages, max_tokens=1024)
     text = _text_from(response)
     step_id = await observability.log_step(query_id, "reason", step_index, started_at, summary=text)
     await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
@@ -141,7 +144,7 @@ async def _plan(
     )
     messages = [{"role": "user", "content": f"User question: {query_text}\n\nYour reasoning: {reason_text}"}]
     started_at = datetime.now(timezone.utc)
-    response = await llm.call_claude(system=system, messages=messages, max_tokens=512)
+    response = await llm.call_claude(system=system, messages=messages, max_tokens=1024)
     text = _text_from(response)
     step_id = await observability.log_step(query_id, "plan", step_index, started_at, summary=text)
     await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
@@ -317,13 +320,44 @@ async def _synthesize(
         }
     ]
     started_at = datetime.now(timezone.utc)
-    response = await llm.call_claude(system=system, messages=messages, max_tokens=1024)
+    responses = []
+    response = await llm.call_claude(system=system, messages=messages, max_tokens=SYNTHESIZE_MAX_TOKENS)
+    responses.append(response)
     answer = _text_from(response)
     if not answer.strip():
-        response = await llm.call_claude(system=system, messages=messages, max_tokens=1024)
+        response = await llm.call_claude(system=system, messages=messages, max_tokens=SYNTHESIZE_MAX_TOKENS)
+        responses.append(response)
         answer = _text_from(response)
+
+    # A cut-off answer (e.g. a table that stops mid-row) still comes back as a
+    # normal success, so check stop_reason. Retry once, telling the model it hit
+    # the length limit so it trims extras instead of repeating itself; if that
+    # is also cut off, return what we have with a visible note rather than
+    # passing off a partial answer as complete.
+    truncated = response.stop_reason == "max_tokens"
+    if truncated:
+        retry_messages = messages + [
+            {"role": "assistant", "content": answer},
+            {
+                "role": "user",
+                "content": (
+                    "Your answer above was cut off because it reached the length "
+                    "limit. Write the complete answer again, more concisely: keep "
+                    "everything the user explicitly asked for, but drop extra "
+                    "commentary and caveats."
+                ),
+            },
+        ]
+        response = await llm.call_claude(system=system, messages=retry_messages, max_tokens=SYNTHESIZE_MAX_TOKENS)
+        responses.append(response)
+        answer = _text_from(response)
+        truncated = response.stop_reason == "max_tokens"
+        if truncated:
+            answer += "\n\n_Note: this answer was cut off because it hit the length limit. Try asking for fewer items._"
+
     step_id = await observability.log_step(query_id, "synthesize", step_index, started_at, summary=answer[:200])
-    await observability.log_llm_call(step_id, response.model, llm.usage_dict(response))
+    for r in responses:
+        await observability.log_llm_call(step_id, r.model, llm.usage_dict(r))
     if not answer.strip():
         answer = (
             "I gathered relevant data but wasn't able to generate a written "
