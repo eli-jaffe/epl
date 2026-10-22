@@ -2,7 +2,14 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { getAdminQueryDetail, getCurrentUser, type QueryDetail, type Step } from '$lib/api';
+	import {
+		cancelQuery,
+		getAdminQueryDetail,
+		getCurrentUser,
+		resumeQueryStreaming,
+		type QueryDetail,
+		type Step
+	} from '$lib/api';
 	import { getToken } from '$lib/auth';
 
 	const PHASE_COLORS: Record<string, string> = {
@@ -21,6 +28,7 @@
 	let detail: QueryDetail | null = $state(null);
 	let expandedStepId: string | null = $state(null);
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
+	let acting = $state(false);
 
 	onMount(async () => {
 		const stored = getToken();
@@ -38,21 +46,55 @@
 		ready = true;
 		if (authorized) {
 			await load();
-			// Poll while the query is still running, so the waterfall fills in
-			// as the agent moves through steps instead of only updating on the
-			// next manual visit to this page. Stops on its own once the query
-			// resolves (success/failed) -- no reason to keep polling a finished
-			// query -- and on unmount if you navigate away first.
-			pollHandle = setInterval(async () => {
-				if (detail?.status === 'running') {
-					await load(true);
-				} else if (pollHandle) {
-					clearInterval(pollHandle);
-					pollHandle = null;
-				}
-			}, 1000);
+			startPolling();
 		}
 	});
+
+	// Poll while the query is still running, so the waterfall fills in as the
+	// agent moves through steps instead of only updating on the next manual
+	// visit to this page. Stops on its own once the query resolves
+	// (success/failed/interrupted) -- no reason to keep polling a finished
+	// query -- and on unmount if you navigate away first. `acting` keeps it
+	// alive across the moment between clicking Restart and the status
+	// flipping to running.
+	function startPolling() {
+		if (pollHandle) return;
+		pollHandle = setInterval(async () => {
+			if (detail?.status === 'running' || acting) {
+				await load(true);
+			} else if (pollHandle) {
+				clearInterval(pollHandle);
+				pollHandle = null;
+			}
+		}, 1000);
+	}
+
+	async function restart() {
+		acting = true;
+		error = null;
+		startPolling();
+		try {
+			await resumeQueryStreaming(page.params.id ?? '', token, () => {});
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Something went wrong.';
+		} finally {
+			acting = false;
+			await load(true);
+		}
+	}
+
+	async function cancel() {
+		acting = true;
+		error = null;
+		try {
+			await cancelQuery(page.params.id ?? '', token);
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Something went wrong.';
+		} finally {
+			acting = false;
+			await load(true);
+		}
+	}
 
 	onDestroy(() => {
 		if (pollHandle) clearInterval(pollHandle);
@@ -146,7 +188,14 @@
 					<dt>Question</dt>
 					<dd>{detail.query_text}</dd>
 					<dt>Status</dt>
-					<dd><span class="status status-{detail.status}">{detail.status}</span></dd>
+					<dd>
+						<span class="status status-{detail.status}">{detail.status}</span>
+						{#if detail.failure_reason}<span class="reason">({detail.failure_reason})</span>{/if}
+						{#if detail.status === 'interrupted'}
+							<button type="button" disabled={acting} onclick={restart}>Restart</button>
+							<button type="button" disabled={acting} onclick={cancel}>Cancel</button>
+						{/if}
+					</dd>
 					<dt>Started</dt>
 					<dd>{formatStarted(detail.started_at)}</dd>
 					<dt>Total duration</dt>
@@ -259,6 +308,11 @@
 		font-family: ui-monospace, monospace;
 		font-size: 0.8rem;
 		word-break: break-all;
+	}
+	.reason {
+		color: #666;
+		font-size: 0.8rem;
+		margin: 0 0.5rem 0 0.25rem;
 	}
 	.final-answer {
 		white-space: pre-wrap;

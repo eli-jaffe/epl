@@ -60,6 +60,36 @@ export async function askAgentStreaming(
 		},
 		body: JSON.stringify({ query, conversation_id: conversationId })
 	});
+	return readAnswerStream(response, onStatus);
+}
+
+// Resumes an interrupted query; streams the same status/answer frames as /chat.
+export async function resumeQueryStreaming(
+	queryId: string,
+	token: string,
+	onStatus: (message: string) => void
+): Promise<string> {
+	const response = await fetch(`/chat/${queryId}/resume`, {
+		method: 'POST',
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	return readAnswerStream(response, onStatus);
+}
+
+export async function cancelQuery(queryId: string, token: string): Promise<void> {
+	const response = await fetch(`/chat/${queryId}/cancel`, {
+		method: 'POST',
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	if (!response.ok) {
+		throw new Error(await readErrorDetail(response));
+	}
+}
+
+async function readAnswerStream(
+	response: Response,
+	onStatus: (message: string) => void
+): Promise<string> {
 	if (!response.ok) {
 		throw new Error(await readErrorDetail(response));
 	}
@@ -107,6 +137,7 @@ export type HistoryEntry = {
 	query_text: string;
 	final_answer: string | null;
 	status: string;
+	failure_reason: string | null;
 	started_at: string;
 };
 
@@ -144,6 +175,7 @@ export type QuerySummary = {
 	user_email: string;
 	query_text: string;
 	status: string;
+	failure_reason: string | null;
 	started_at: string;
 	duration_ms: number | null;
 };
@@ -207,6 +239,7 @@ export type QueryDetail = {
 	user_email: string;
 	query_text: string;
 	status: string;
+	failure_reason: string | null;
 	final_answer: string | null;
 	started_at: string;
 	finished_at: string | null;

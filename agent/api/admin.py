@@ -36,6 +36,7 @@ class QuerySummary(BaseModel):
     user_email: str
     query_text: str
     status: str
+    failure_reason: str | None
     started_at: datetime
     duration_ms: int | None
 
@@ -71,6 +72,7 @@ class QueryDetail(BaseModel):
     user_email: str
     query_text: str
     status: str
+    failure_reason: str | None
     final_answer: str | None
     started_at: datetime
     finished_at: datetime | None
@@ -105,6 +107,7 @@ async def list_queries(
             user_email=email,
             query_text=q.query_text,
             status=q.status,
+            failure_reason=q.failure_reason,
             started_at=q.started_at,
             duration_ms=_duration_ms(q.started_at, q.finished_at),
         )
@@ -148,6 +151,7 @@ async def get_query_detail(
         user_email=user_email,
         query_text=query.query_text,
         status=query.status,
+        failure_reason=query.failure_reason,
         final_answer=query.final_answer,
         started_at=query.started_at,
         finished_at=query.finished_at,

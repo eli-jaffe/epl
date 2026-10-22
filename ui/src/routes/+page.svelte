@@ -1,11 +1,19 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { askAgentStreaming, getChatHistory, getCurrentUser } from '$lib/api';
+	import {
+		askAgentStreaming,
+		cancelQuery,
+		getChatHistory,
+		getCurrentUser,
+		resumeQueryStreaming
+	} from '$lib/api';
 	import { clearToken, getToken } from '$lib/auth';
 
 	type Turn = { question: string; answer: string; error?: boolean; status?: string };
-	type HistoryTurn = Turn & { expanded: boolean };
+	// `interrupted` entries are queries the backend lost mid-run (see the
+	// stale-query sweep) -- the asker can restart or cancel them from here.
+	type HistoryTurn = Turn & { expanded: boolean; queryId: string; interrupted: boolean };
 
 	let ready = $state(false);
 	let token = $state('');
@@ -40,9 +48,16 @@
 			.then((entries) => {
 				history = entries.map((entry) => ({
 					question: entry.query_text,
-					answer: entry.final_answer ?? '(no answer recorded)',
+					answer:
+						entry.status === 'interrupted'
+							? 'This question was interrupted before it finished.'
+							: entry.failure_reason === 'cancelled'
+								? 'Cancelled.'
+								: (entry.final_answer ?? '(no answer recorded)'),
 					error: entry.status === 'failed',
-					expanded: false
+					expanded: false,
+					queryId: entry.query_id,
+					interrupted: entry.status === 'interrupted'
 				}));
 			})
 			.catch(() => {});
@@ -50,6 +65,36 @@
 
 	function toggleHistory(index: number) {
 		history[index].expanded = !history[index].expanded;
+	}
+
+	// Mutate through history[index] for the same Svelte 5 proxy reason as submit().
+	async function restartHistory(index: number) {
+		const entry = history[index];
+		history[index].status = 'Restarting...';
+		try {
+			history[index].answer = await resumeQueryStreaming(entry.queryId, token, (msg) => {
+				history[index].status = msg;
+			});
+			history[index].error = false;
+		} catch (err) {
+			history[index].answer = err instanceof Error ? err.message : 'Something went wrong.';
+			history[index].error = true;
+		} finally {
+			history[index].status = undefined;
+			history[index].interrupted = false;
+			history[index].expanded = true;
+		}
+	}
+
+	async function cancelHistory(index: number) {
+		try {
+			await cancelQuery(history[index].queryId, token);
+			history[index].answer = 'Cancelled.';
+		} catch (err) {
+			history[index].answer = err instanceof Error ? err.message : 'Something went wrong.';
+		}
+		history[index].error = true;
+		history[index].interrupted = false;
 	}
 
 	async function submit(event: SubmitEvent) {
@@ -112,7 +157,17 @@
 							<span class="chevron" class:open={entry.expanded}>&#9656;</span>
 							{entry.question}
 						</button>
-						{#if entry.expanded}
+						{#if entry.interrupted}
+							<div class="interrupted-actions">
+								{#if entry.status}
+									<span class="pending">{entry.status}</span>
+								{:else}
+									<span class="interrupted-label">Interrupted</span>
+									<button type="button" onclick={() => restartHistory(i)}>Restart</button>
+									<button type="button" onclick={() => cancelHistory(i)}>Cancel</button>
+								{/if}
+							</div>
+						{:else if entry.expanded}
 							<p class="answer" class:error={entry.error}>{entry.answer}</p>
 						{/if}
 					</div>
@@ -159,6 +214,20 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+	}
+	.interrupted-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.25rem 0 0 1.1rem;
+		font-size: 0.85rem;
+	}
+	.interrupted-label {
+		background: #ffe8cc;
+		color: #a04a00;
+		padding: 0.15rem 0.5rem;
+		border-radius: 0.25rem;
+		font-size: 0.8rem;
 	}
 	.header-actions {
 		display: flex;

@@ -2,7 +2,13 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { getCurrentUser, listAdminQueries, type QuerySummary } from '$lib/api';
+	import {
+		cancelQuery,
+		getCurrentUser,
+		listAdminQueries,
+		resumeQueryStreaming,
+		type QuerySummary
+	} from '$lib/api';
 	import { getToken } from '$lib/auth';
 
 	let ready = $state(false);
@@ -14,6 +20,7 @@
 	let statusFilter = $state('');
 	let userEmailFilter = $state('');
 	let conversationFilter = $state('');
+	let busyIds: string[] = $state([]);
 
 	onMount(async () => {
 		const stored = getToken();
@@ -55,6 +62,19 @@
 		if (ms === null) return 'running...';
 		if (ms < 1000) return `${ms}ms`;
 		return `${(ms / 1000).toFixed(1)}s`;
+	}
+
+	async function act(queryId: string, run: () => Promise<unknown>) {
+		busyIds = [...busyIds, queryId];
+		error = null;
+		try {
+			await run();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Something went wrong.';
+		} finally {
+			busyIds = busyIds.filter((id) => id !== queryId);
+			await load();
+		}
 	}
 
 	function shortId(id: string | null): string {
@@ -106,6 +126,7 @@
 						<th>Status</th>
 						<th>Started</th>
 						<th>Duration</th>
+						<th></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -127,10 +148,26 @@
 							<td><span class="status status-{q.status}">{q.status}</span></td>
 							<td>{formatStarted(q.started_at)}</td>
 							<td>{formatDuration(q.duration_ms)}</td>
+							<td class="actions">
+								{#if q.status === 'interrupted'}
+									{#if busyIds.includes(q.query_id)}
+										Working...
+									{:else}
+										<button
+											type="button"
+											onclick={() => act(q.query_id, () => resumeQueryStreaming(q.query_id, token, () => {}))}
+											>Restart</button
+										>
+										<button type="button" onclick={() => act(q.query_id, () => cancelQuery(q.query_id, token))}
+											>Cancel</button
+										>
+									{/if}
+								{/if}
+							</td>
 						</tr>
 					{:else}
 						<tr>
-							<td colspan="7" class="empty">No queries found.</td>
+							<td colspan="8" class="empty">No queries found.</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -228,6 +265,10 @@
 	.status-running {
 		background: #fff3cd;
 		color: #856404;
+	}
+	.actions {
+		white-space: nowrap;
+		font-size: 0.8rem;
 	}
 	.mono {
 		font-family: ui-monospace, monospace;

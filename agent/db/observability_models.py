@@ -59,6 +59,13 @@ class AgentQuery(Base):
     # existed (staleness falls back to started_at for those).
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(_TZDateTime, default=None)
     final_answer: Mapped[str | None] = mapped_column(default=None)
+    # Loop progress saved after each Execute phase so an interrupted query can
+    # resume at Reflect instead of starting over -- see agent/loop.py's
+    # _run_loop. Postgres-only (not synced to DuckDB).
+    checkpoint: Mapped[dict | None] = mapped_column(JSON, default=None)
+    # Why a 'failed' query failed when it wasn't a loop exception; 'cancelled'
+    # when a user cancelled an interrupted query.
+    failure_reason: Mapped[str | None] = mapped_column(default=None)
     synced_at: Mapped[datetime | None] = mapped_column(_TZDateTime, default=None)
 
 

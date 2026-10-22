@@ -373,18 +373,59 @@ async def run_agent_query(
     conversation_id: uuid.UUID | None = None,
 ) -> str:
     query_id = await observability.start_query(user_id, query_text, conversation_id)
+    return await _run_loop(query_id, query_text, on_status)
+
+
+async def resume_agent_query(query_id: uuid.UUID, on_status: OnStatus | None = None) -> str:
+    """Continues a query previously flipped interrupted -> running by
+    observability.claim_for_resume. Phase-level, not mid-call: Claude's
+    in-flight message history isn't persisted, so a resume either picks up at
+    Reflect (if an Execute finished) or redoes the current attempt."""
+    query_text, checkpoint = await observability.get_query_for_resume(query_id)
+    return await _run_loop(query_id, query_text, on_status, checkpoint)
+
+
+async def _run_loop(
+    query_id: uuid.UUID,
+    query_text: str,
+    on_status: OnStatus | None = None,
+    checkpoint: dict | None = None,
+) -> str:
     step_index = 0
     failed_calls: list[str] = []
     execute_summary = ""
     status = "CANNOT_ANSWER"
+    first_attempt = 0
+    skip_to_reflect = False
+
+    if checkpoint is not None:
+        # Saved right after the attempt's Execute, so Reason/Plan/Execute for
+        # that attempt are done -- only Reflect (and anything after) is left.
+        first_attempt = checkpoint["attempt"]
+        failed_calls = list(checkpoint["failed_calls"])
+        execute_summary = checkpoint["execute_summary"]
+        skip_to_reflect = True
+    # Resumed steps continue the original numbering (0 for a fresh query).
+    step_index = await observability.next_step_index(query_id)
 
     try:
-        for _attempt in range(MAX_OUTER_RETRIES):
-            reason_text, step_index = await _reason(query_id, query_text, step_index, failed_calls, on_status)
-            plan_text, step_index = await _plan(query_id, query_text, reason_text, step_index, on_status)
-            execute_summary, step_index = await _execute(
-                query_id, query_text, plan_text, step_index, failed_calls, on_status
-            )
+        for attempt in range(first_attempt, MAX_OUTER_RETRIES):
+            if skip_to_reflect:
+                skip_to_reflect = False
+            else:
+                reason_text, step_index = await _reason(query_id, query_text, step_index, failed_calls, on_status)
+                plan_text, step_index = await _plan(query_id, query_text, reason_text, step_index, on_status)
+                execute_summary, step_index = await _execute(
+                    query_id, query_text, plan_text, step_index, failed_calls, on_status
+                )
+                await observability.save_checkpoint(
+                    query_id,
+                    {
+                        "attempt": attempt,
+                        "failed_calls": failed_calls,
+                        "execute_summary": execute_summary,
+                    },
+                )
             status, _reasoning, step_index = await _reflect(query_id, query_text, execute_summary, step_index, on_status)
             if status == "SUCCESS":
                 break
