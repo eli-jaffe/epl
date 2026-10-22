@@ -133,6 +133,14 @@
 			<section class="summary">
 				<h1>Query detail</h1>
 				<dl>
+					<dt>Query ID</dt>
+					<dd class="mono">{detail.query_id}</dd>
+					<dt>Conversation ID</dt>
+					<dd class="mono">
+						{#if detail.conversation_id}
+							<a href={`/admin?conversation_id=${detail.conversation_id}`}>{detail.conversation_id}</a>
+						{:else}(none){/if}
+					</dd>
 					<dt>Asker</dt>
 					<dd>{detail.user_email}</dd>
 					<dt>Question</dt>
@@ -174,6 +182,7 @@
 						</div>
 						{#if expandedStepId === step.step_id}
 							<div class="expanded">
+								<p><strong>Step ID:</strong> <span class="mono">{step.step_id}</span></p>
 								{#if step.summary}
 									<p><strong>Summary:</strong> {step.summary}</p>
 								{/if}
@@ -192,7 +201,7 @@
 									<p><strong>LLM calls:</strong></p>
 									<div class="llm-chips">
 										{#each step.llm_calls as call (call.call_id)}
-											<span class="chip">
+											<span class="chip" title={`call_id ${call.call_id}`}>
 												{call.model} -- in {call.input_tokens ?? '?'} / out {call.output_tokens ?? '?'}
 												{#if call.cache_read_tokens}
 													/ cache-read {call.cache_read_tokens}{/if}
@@ -246,6 +255,11 @@
 	dd {
 		margin: 0;
 	}
+	.mono {
+		font-family: ui-monospace, monospace;
+		font-size: 0.8rem;
+		word-break: break-all;
+	}
 	.final-answer {
 		white-space: pre-wrap;
 	}
@@ -261,6 +275,10 @@
 	.status-failed {
 		background: #fbe3e3;
 		color: #b00020;
+	}
+	.status-interrupted {
+		background: #ffe8cc;
+		color: #a04a00;
 	}
 	.status-running {
 		background: #fff3cd;

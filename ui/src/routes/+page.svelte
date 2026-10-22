@@ -14,6 +14,8 @@
 	let turns: Turn[] = $state([]);
 	let history: HistoryTurn[] = $state([]);
 	let isSuperuser = $state(false);
+	// One id per page load groups this session's questions for admin troubleshooting.
+	const conversationId = crypto.randomUUID();
 
 	onMount(() => {
 		const stored = getToken();
@@ -66,7 +68,7 @@
 		// and never showed the final answer.
 		const index = turns.length - 1;
 		try {
-			turns[index].answer = await askAgentStreaming(question, token, (msg) => {
+			turns[index].answer = await askAgentStreaming(question, token, conversationId, (msg) => {
 				turns[index].status = msg;
 			});
 		} catch (err) {

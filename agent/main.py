@@ -9,6 +9,8 @@ chat route is a stub pending the agent loop. Run locally with:
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -18,6 +20,24 @@ from agent.api.chat import router as chat_router
 from agent.auth.schemas import UserCreate, UserRead, UserUpdate
 from agent.auth.users import auth_backend, fastapi_users
 from agent.db.postgres import Base, engine
+from agent.observability import mark_stale_queries
+
+logger = logging.getLogger(__name__)
+
+SWEEP_INTERVAL_SECONDS = 60
+
+
+async def _sweep_stale_queries() -> None:
+    # First pass runs immediately (catches queries orphaned by the previous
+    # process), then once a minute for hung tasks in this one.
+    while True:
+        try:
+            count = await mark_stale_queries()
+            if count:
+                logger.warning("Marked %d stale running quer%s interrupted", count, "y" if count == 1 else "ies")
+        except Exception:  # noqa: BLE001 -- a failed sweep must never take the app down
+            logger.exception("Stale-query sweep failed")
+        await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
 
 
 @asynccontextmanager
@@ -26,7 +46,9 @@ async def lifespan(app: FastAPI):
     # Swap for Alembic migrations before this touches any real user data.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    sweep = asyncio.create_task(_sweep_stale_queries())
     yield
+    sweep.cancel()
 
 
 app = FastAPI(title="EPL Fantasy Agent", lifespan=lifespan)

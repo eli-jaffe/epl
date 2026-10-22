@@ -20,7 +20,7 @@ CREATE TABLE ingest_runs (
     source_ref      VARCHAR,                -- git commit SHA, or API fetch window
     started_at      TIMESTAMP NOT NULL,
     finished_at     TIMESTAMP,
-    status          VARCHAR NOT NULL,       -- 'running' | 'success' | 'failed'
+    status          VARCHAR NOT NULL,       -- 'running' | 'success' | 'failed' | 'interrupted'
     rows_affected   BIGINT,
     notes           VARCHAR
 );
@@ -289,7 +289,7 @@ CREATE TABLE agent_query (
     query_id        UUID PRIMARY KEY DEFAULT uuid(),
     user_id         UUID NOT NULL,
     query_text      VARCHAR NOT NULL,
-    status          VARCHAR NOT NULL,      -- 'running' | 'success' | 'failed'
+    status          VARCHAR NOT NULL,      -- 'running' | 'success' | 'failed' | 'interrupted'
     started_at      TIMESTAMP NOT NULL,
     finished_at     TIMESTAMP,
     final_answer    VARCHAR

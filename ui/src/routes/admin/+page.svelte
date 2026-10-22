@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { getCurrentUser, listAdminQueries, type QuerySummary } from '$lib/api';
 	import { getToken } from '$lib/auth';
 
@@ -12,6 +13,7 @@
 	let queries: QuerySummary[] = $state([]);
 	let statusFilter = $state('');
 	let userEmailFilter = $state('');
+	let conversationFilter = $state('');
 
 	onMount(async () => {
 		const stored = getToken();
@@ -20,6 +22,7 @@
 			return;
 		}
 		token = stored;
+		conversationFilter = page.url.searchParams.get('conversation_id') ?? '';
 		try {
 			const user = await getCurrentUser(token);
 			authorized = user.is_superuser;
@@ -38,7 +41,8 @@
 		try {
 			queries = await listAdminQueries(token, {
 				status: statusFilter.trim() || undefined,
-				user_email: userEmailFilter.trim() || undefined
+				user_email: userEmailFilter.trim() || undefined,
+				conversation_id: conversationFilter.trim() || undefined
 			});
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong.';
@@ -51,6 +55,10 @@
 		if (ms === null) return 'running...';
 		if (ms < 1000) return `${ms}ms`;
 		return `${(ms / 1000).toFixed(1)}s`;
+	}
+
+	function shortId(id: string | null): string {
+		return id ? id.slice(0, 8) : '-';
 	}
 
 	function formatStarted(iso: string): string {
@@ -71,11 +79,15 @@
 			<form class="filters" onsubmit={(e) => (e.preventDefault(), load())}>
 				<label>
 					Status
-					<input type="text" bind:value={statusFilter} placeholder="success, failed, running" />
+					<input type="text" bind:value={statusFilter} placeholder="success, failed, running, interrupted" />
 				</label>
 				<label>
 					User email
 					<input type="text" bind:value={userEmailFilter} placeholder="filter by asker" />
+				</label>
+				<label>
+					Conversation ID
+					<input type="text" bind:value={conversationFilter} placeholder="full conversation id" />
 				</label>
 				<button type="submit" disabled={loading}>{loading ? 'Loading...' : 'Filter'}</button>
 			</form>
@@ -87,6 +99,8 @@
 			<table>
 				<thead>
 					<tr>
+						<th>Conversation</th>
+						<th>Query ID</th>
 						<th>Asker</th>
 						<th>Query</th>
 						<th>Status</th>
@@ -97,6 +111,17 @@
 				<tbody>
 					{#each queries as q (q.query_id)}
 						<tr>
+							<td class="mono" title={q.conversation_id ?? ''}>
+								{#if q.conversation_id}
+									<button
+										type="button"
+										class="link"
+										onclick={() => ((conversationFilter = q.conversation_id ?? ''), load())}
+										>{shortId(q.conversation_id)}</button
+									>
+								{:else}-{/if}
+							</td>
+							<td class="mono" title={q.query_id}>{shortId(q.query_id)}</td>
 							<td><a href={`/admin/${q.query_id}`}>{q.user_email}</a></td>
 							<td class="query-text"><a href={`/admin/${q.query_id}`}>{q.query_text}</a></td>
 							<td><span class="status status-{q.status}">{q.status}</span></td>
@@ -105,7 +130,7 @@
 						</tr>
 					{:else}
 						<tr>
-							<td colspan="5" class="empty">No queries found.</td>
+							<td colspan="7" class="empty">No queries found.</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -196,9 +221,28 @@
 		background: #fbe3e3;
 		color: #b00020;
 	}
+	.status-interrupted {
+		background: #ffe8cc;
+		color: #a04a00;
+	}
 	.status-running {
 		background: #fff3cd;
 		color: #856404;
+	}
+	.mono {
+		font-family: ui-monospace, monospace;
+		font-size: 0.8rem;
+	}
+	.link {
+		background: none;
+		border: none;
+		padding: 0;
+		color: #0060df;
+		font: inherit;
+		cursor: pointer;
+	}
+	.link:hover {
+		text-decoration: underline;
 	}
 	.empty {
 		color: #666;

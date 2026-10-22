@@ -32,6 +32,7 @@ def _duration_ms(started_at: datetime | None, finished_at: datetime | None) -> i
 
 class QuerySummary(BaseModel):
     query_id: uuid.UUID
+    conversation_id: uuid.UUID | None
     user_email: str
     query_text: str
     status: str
@@ -66,6 +67,7 @@ class StepOut(BaseModel):
 
 class QueryDetail(BaseModel):
     query_id: uuid.UUID
+    conversation_id: uuid.UUID | None
     user_email: str
     query_text: str
     status: str
@@ -82,6 +84,7 @@ async def list_queries(
     offset: int = 0,
     status: str | None = None,
     user_email: str | None = None,
+    conversation_id: uuid.UUID | None = None,
     session: AsyncSession = Depends(get_async_session),
     _admin: User = Depends(current_superuser),
 ) -> list[QuerySummary]:
@@ -90,12 +93,15 @@ async def list_queries(
         stmt = stmt.where(AgentQuery.status == status)
     if user_email is not None:
         stmt = stmt.where(User.email.ilike(f"%{user_email}%"))
+    if conversation_id is not None:
+        stmt = stmt.where(AgentQuery.conversation_id == conversation_id)
     stmt = stmt.order_by(AgentQuery.started_at.desc()).limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
     return [
         QuerySummary(
             query_id=q.query_id,
+            conversation_id=q.conversation_id,
             user_email=email,
             query_text=q.query_text,
             status=q.status,
@@ -138,6 +144,7 @@ async def get_query_detail(
 
     return QueryDetail(
         query_id=query.query_id,
+        conversation_id=query.conversation_id,
         user_email=user_email,
         query_text=query.query_text,
         status=query.status,

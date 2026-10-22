@@ -49,6 +49,7 @@ export async function register(email: string, password: string): Promise<void> {
 export async function askAgentStreaming(
 	query: string,
 	token: string,
+	conversationId: string,
 	onStatus: (message: string) => void
 ): Promise<string> {
 	const response = await fetch('/chat', {
@@ -57,7 +58,7 @@ export async function askAgentStreaming(
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify({ query })
+		body: JSON.stringify({ query, conversation_id: conversationId })
 	});
 	if (!response.ok) {
 		throw new Error(await readErrorDetail(response));
@@ -139,6 +140,7 @@ export async function getCurrentUser(token: string): Promise<CurrentUser> {
 
 export type QuerySummary = {
 	query_id: string;
+	conversation_id: string | null;
 	user_email: string;
 	query_text: string;
 	status: string;
@@ -151,6 +153,7 @@ export type AdminQueryFilters = {
 	offset?: number;
 	status?: string;
 	user_email?: string;
+	conversation_id?: string;
 };
 
 export async function listAdminQueries(
@@ -162,6 +165,7 @@ export async function listAdminQueries(
 	if (filters.offset !== undefined) params.set('offset', String(filters.offset));
 	if (filters.status) params.set('status', filters.status);
 	if (filters.user_email) params.set('user_email', filters.user_email);
+	if (filters.conversation_id) params.set('conversation_id', filters.conversation_id);
 	const qs = params.toString();
 	const response = await fetch(`/admin/queries${qs ? `?${qs}` : ''}`, {
 		headers: { Authorization: `Bearer ${token}` }
@@ -199,6 +203,7 @@ export type Step = {
 
 export type QueryDetail = {
 	query_id: string;
+	conversation_id: string | null;
 	user_email: string;
 	query_text: string;
 	status: string;

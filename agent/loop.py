@@ -367,9 +367,12 @@ async def _synthesize(
 
 
 async def run_agent_query(
-    user_id: uuid.UUID, query_text: str, on_status: OnStatus | None = None
+    user_id: uuid.UUID,
+    query_text: str,
+    on_status: OnStatus | None = None,
+    conversation_id: uuid.UUID | None = None,
 ) -> str:
-    query_id = await observability.start_query(user_id, query_text)
+    query_id = await observability.start_query(user_id, query_text, conversation_id)
     step_index = 0
     failed_calls: list[str] = []
     execute_summary = ""

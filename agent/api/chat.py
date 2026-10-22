@@ -33,6 +33,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 class ChatRequest(BaseModel):
     query: str
+    conversation_id: uuid.UUID | None = None
 
 
 class HistoryEntry(BaseModel):
@@ -47,7 +48,7 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def _stream_answer(user_id, query_text: str):
+async def _stream_answer(user_id, query_text: str, conversation_id: uuid.UUID | None):
     # One queue carries both status updates and the terminal event (answer
     # or error) -- a plain `await queue.get()` loop, no polling, so status
     # frames reach the client the instant a phase starts rather than on
@@ -60,7 +61,9 @@ async def _stream_answer(user_id, query_text: str):
 
     async def run() -> None:
         try:
-            answer = await run_agent_query(user_id, query_text, on_status=on_status)
+            answer = await run_agent_query(
+                user_id, query_text, on_status=on_status, conversation_id=conversation_id
+            )
             await queue.put(("answer", answer))
         except Exception as exc:  # noqa: BLE001 -- deliberately broad: any
             # failure in the loop becomes a clean terminal SSE frame instead
@@ -87,7 +90,7 @@ async def _stream_answer(user_id, query_text: str):
 @router.post("")
 async def chat(request: ChatRequest, user: User = Depends(current_active_user)) -> StreamingResponse:
     return StreamingResponse(
-        _stream_answer(user.id, request.query),
+        _stream_answer(user.id, request.query, request.conversation_id),
         media_type="text/event-stream",
     )
 
