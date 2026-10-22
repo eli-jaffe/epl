@@ -49,6 +49,7 @@ export async function register(email: string, password: string): Promise<void> {
 export async function askAgentStreaming(
 	query: string,
 	token: string,
+	conversationId: string,
 	onStatus: (message: string) => void
 ): Promise<string> {
 	const response = await fetch('/chat', {
@@ -57,8 +58,38 @@ export async function askAgentStreaming(
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${token}`
 		},
-		body: JSON.stringify({ query })
+		body: JSON.stringify({ query, conversation_id: conversationId })
 	});
+	return readAnswerStream(response, onStatus);
+}
+
+// Resumes an interrupted query; streams the same status/answer frames as /chat.
+export async function resumeQueryStreaming(
+	queryId: string,
+	token: string,
+	onStatus: (message: string) => void
+): Promise<string> {
+	const response = await fetch(`/chat/${queryId}/resume`, {
+		method: 'POST',
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	return readAnswerStream(response, onStatus);
+}
+
+export async function cancelQuery(queryId: string, token: string): Promise<void> {
+	const response = await fetch(`/chat/${queryId}/cancel`, {
+		method: 'POST',
+		headers: { Authorization: `Bearer ${token}` }
+	});
+	if (!response.ok) {
+		throw new Error(await readErrorDetail(response));
+	}
+}
+
+async function readAnswerStream(
+	response: Response,
+	onStatus: (message: string) => void
+): Promise<string> {
 	if (!response.ok) {
 		throw new Error(await readErrorDetail(response));
 	}
@@ -106,6 +137,7 @@ export type HistoryEntry = {
 	query_text: string;
 	final_answer: string | null;
 	status: string;
+	failure_reason: string | null;
 	started_at: string;
 };
 
@@ -139,9 +171,11 @@ export async function getCurrentUser(token: string): Promise<CurrentUser> {
 
 export type QuerySummary = {
 	query_id: string;
+	conversation_id: string | null;
 	user_email: string;
 	query_text: string;
 	status: string;
+	failure_reason: string | null;
 	started_at: string;
 	duration_ms: number | null;
 };
@@ -151,6 +185,7 @@ export type AdminQueryFilters = {
 	offset?: number;
 	status?: string;
 	user_email?: string;
+	conversation_id?: string;
 };
 
 export async function listAdminQueries(
@@ -162,6 +197,7 @@ export async function listAdminQueries(
 	if (filters.offset !== undefined) params.set('offset', String(filters.offset));
 	if (filters.status) params.set('status', filters.status);
 	if (filters.user_email) params.set('user_email', filters.user_email);
+	if (filters.conversation_id) params.set('conversation_id', filters.conversation_id);
 	const qs = params.toString();
 	const response = await fetch(`/admin/queries${qs ? `?${qs}` : ''}`, {
 		headers: { Authorization: `Bearer ${token}` }
@@ -199,9 +235,11 @@ export type Step = {
 
 export type QueryDetail = {
 	query_id: string;
+	conversation_id: string | null;
 	user_email: string;
 	query_text: string;
 	status: string;
+	failure_reason: string | null;
 	final_answer: string | null;
 	started_at: string;
 	finished_at: string | null;

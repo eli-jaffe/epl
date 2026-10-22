@@ -9,26 +9,42 @@ added at each call site) -- only the storage target changed.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func, select, update
 
 from agent.db.observability_models import AgentLlmCall, AgentQuery, AgentStep
 from agent.db.postgres import async_session_maker
+
+
+# A running query whose last heartbeat is older than this is presumed dead
+# (backend killed, task hung). Steps are logged after every phase/tool call,
+# so a healthy query's gap is at most one LLM call or run_sql (10s cap) --
+# 10 minutes leaves generous slack. The same threshold is used at startup
+# rather than "mark everything running as dead": the MCP server runs the
+# agent loop in a separate process, and a restart of the web backend must
+# not interrupt a live MCP-driven query.
+STALE_THRESHOLD = timedelta(minutes=10)
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def start_query(user_id: uuid.UUID, query_text: str) -> uuid.UUID:
+async def start_query(
+    user_id: uuid.UUID, query_text: str, conversation_id: uuid.UUID | None = None
+) -> uuid.UUID:
     query_id = uuid.uuid4()
     async with async_session_maker() as session:
         session.add(
             AgentQuery(
                 query_id=query_id,
                 user_id=user_id,
+                conversation_id=conversation_id,
                 query_text=query_text,
                 status="running",
                 started_at=_now(),
+                last_heartbeat_at=_now(),
             )
         )
         await session.commit()
@@ -38,6 +54,11 @@ async def start_query(user_id: uuid.UUID, query_text: str) -> uuid.UUID:
 async def finish_query(query_id: uuid.UUID, status: str, final_answer: str | None) -> None:
     async with async_session_maker() as session:
         query = await session.get(AgentQuery, query_id)
+        # Only a still-running query may be finished: if the sweep already
+        # flipped it to 'interrupted' (or a user cancelled it), a straggling
+        # loop must not overwrite that decision.
+        if query.status != "running":
+            return
         query.status = status
         query.final_answer = final_answer
         query.finished_at = _now()
@@ -75,6 +96,7 @@ async def log_step(
                 finished_at=_now(),
             )
         )
+        await session.execute(update(AgentQuery).where(AgentQuery.query_id == query_id).values(last_heartbeat_at=_now()))
         await session.commit()
     return step_id
 
@@ -94,3 +116,74 @@ async def log_llm_call(step_id: uuid.UUID, model: str, usage: dict) -> None:
             )
         )
         await session.commit()
+
+
+async def mark_stale_queries(threshold: timedelta = STALE_THRESHOLD) -> int:
+    """Flips `running` queries with no heartbeat within `threshold` to
+    'interrupted' and returns how many. Rows without a heartbeat (written
+    before the column existed) are judged by started_at instead.
+
+    Resets synced_at so agent/observability_sync.py (which only copies rows
+    where it's NULL) pushes the new status to DuckDB.
+    """
+    cutoff = _now() - threshold
+    async with async_session_maker() as session:
+        result = await session.execute(
+            update(AgentQuery)
+            .where(
+                AgentQuery.status == "running",
+                func.coalesce(AgentQuery.last_heartbeat_at, AgentQuery.started_at) < cutoff,
+            )
+            .values(status="interrupted", synced_at=None)
+        )
+        await session.commit()
+        return result.rowcount
+
+
+async def save_checkpoint(query_id: uuid.UUID, checkpoint: dict) -> None:
+    async with async_session_maker() as session:
+        await session.execute(update(AgentQuery).where(AgentQuery.query_id == query_id).values(checkpoint=checkpoint))
+        await session.commit()
+
+
+async def next_step_index(query_id: uuid.UUID) -> int:
+    """One past the highest logged step_index, so a resumed run's steps sort
+    after the original run's in the admin waterfall."""
+    async with async_session_maker() as session:
+        highest = (
+            await session.execute(select(func.max(AgentStep.step_index)).where(AgentStep.query_id == query_id))
+        ).scalar()
+    return 0 if highest is None else highest + 1
+
+
+async def claim_for_resume(query_id: uuid.UUID) -> bool:
+    """Atomically flips 'interrupted' -> 'running'. Returns False if the query
+    wasn't interrupted (already resumed, cancelled, or finished), so a
+    double-click can't start two runs of the same query."""
+    async with async_session_maker() as session:
+        result = await session.execute(
+            update(AgentQuery)
+            .where(AgentQuery.query_id == query_id, AgentQuery.status == "interrupted")
+            .values(status="running", last_heartbeat_at=_now(), finished_at=None, synced_at=None)
+        )
+        await session.commit()
+        return result.rowcount == 1
+
+
+async def cancel_query(query_id: uuid.UUID) -> bool:
+    """Atomically flips 'interrupted' -> 'failed' (failure_reason='cancelled').
+    Returns False if the query wasn't interrupted."""
+    async with async_session_maker() as session:
+        result = await session.execute(
+            update(AgentQuery)
+            .where(AgentQuery.query_id == query_id, AgentQuery.status == "interrupted")
+            .values(status="failed", failure_reason="cancelled", finished_at=_now(), synced_at=None)
+        )
+        await session.commit()
+        return result.rowcount == 1
+
+
+async def get_query_for_resume(query_id: uuid.UUID) -> tuple[str, dict | None]:
+    async with async_session_maker() as session:
+        query = await session.get(AgentQuery, query_id)
+        return query.query_text, query.checkpoint

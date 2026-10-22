@@ -46,11 +46,26 @@ class AgentQuery(Base):
 
     query_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user.id"), nullable=False)
+    # Groups the questions asked in one chat page session, for troubleshooting.
+    # Nullable: rows from before this column existed, and MCP calls, have none.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True, default=None)
     query_text: Mapped[str] = mapped_column(nullable=False)
-    status: Mapped[str] = mapped_column(nullable=False)  # 'running' | 'success' | 'failed'
+    # 'running' | 'success' | 'failed' | 'interrupted' (no heartbeat for
+    # STALE_THRESHOLD -- see agent/observability.py's mark_stale_queries)
+    status: Mapped[str] = mapped_column(nullable=False)
     started_at: Mapped[datetime] = mapped_column(_TZDateTime, nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(_TZDateTime, default=None)
+    # Bumped on every logged step; NULL on rows from before this column
+    # existed (staleness falls back to started_at for those).
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(_TZDateTime, default=None)
     final_answer: Mapped[str | None] = mapped_column(default=None)
+    # Loop progress saved after each Execute phase so an interrupted query can
+    # resume at Reflect instead of starting over -- see agent/loop.py's
+    # _run_loop. Postgres-only (not synced to DuckDB).
+    checkpoint: Mapped[dict | None] = mapped_column(JSON, default=None)
+    # Why a 'failed' query failed when it wasn't a loop exception; 'cancelled'
+    # when a user cancelled an interrupted query.
+    failure_reason: Mapped[str | None] = mapped_column(default=None)
     synced_at: Mapped[datetime | None] = mapped_column(_TZDateTime, default=None)
 
 
