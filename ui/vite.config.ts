@@ -31,7 +31,10 @@ export default defineConfig({
 			// as page routes (ui/src/routes/admin/), and a bare '/admin' proxy
 			// key would shadow those, intercepting even a plain page load
 			// before SvelteKit's router ever sees it.
-			'/admin/queries': 'http://localhost:8000'
+			'/admin/queries': 'http://localhost:8000',
+			// Same page-vs-API clash as /admin: /dashboard is a page, only
+			// these sub-paths are the backend (regex key, '^' prefix).
+			'^/dashboard/(filters|top-players|metrics)': 'http://localhost:8000'
 		}
 	}
 });

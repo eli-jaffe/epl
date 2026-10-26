@@ -136,6 +136,7 @@
 		<header>
 			<h1>EPL Fantasy Agent</h1>
 			<div class="header-actions">
+					<a href="/dashboard">Dashboard</a>
 				{#if isSuperuser}
 					<a href="/admin">Admin</a>
 				{/if}
