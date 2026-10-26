@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from agent.api.admin import router as admin_router
 from agent.api.chat import router as chat_router
+from agent.api.dashboard import router as dashboard_router
 from agent.auth.schemas import UserCreate, UserRead, UserUpdate
 from agent.auth.users import auth_backend, fastapi_users
 from agent.db.postgres import Base, engine
@@ -64,6 +65,7 @@ app.include_router(
 )
 app.include_router(chat_router)
 app.include_router(admin_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/health")
