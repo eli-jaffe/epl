@@ -256,3 +256,73 @@ export async function getAdminQueryDetail(token: string, queryId: string): Promi
 	}
 	return (await response.json()) as QueryDetail;
 }
+
+// ---- Dashboard (agent/api/dashboard.py) --------------------------------
+
+export type DashboardFilters = {
+	season_id: string;
+	latest_gameweek: number | null;
+	teams: { short_name: string; name: string }[];
+	positions: string[];
+};
+
+export type TopPlayer = {
+	player_code: number;
+	web_name: string;
+	position: string;
+	team_short_name: string;
+	total_points: number;
+	minutes: number;
+	// gameweek scope only
+	goals_scored?: number;
+	assists?: number;
+	bonus?: number;
+	opponents?: string;
+};
+
+export type TopPlayers = {
+	scope: 'season' | 'gameweek';
+	season_id: string;
+	gameweek: number | null;
+	metric_id: string;
+	players: TopPlayer[];
+};
+
+export type Metric = {
+	id: string;
+	name: string;
+	definition: string;
+	formula: string;
+	grain: string;
+	source_views: string[];
+	caveats: string[];
+	status: string;
+};
+
+async function authedGet<T>(path: string, token: string): Promise<T> {
+	const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+	if (!response.ok) {
+		throw new Error(await readErrorDetail(response));
+	}
+	return (await response.json()) as T;
+}
+
+export function getDashboardFilters(token: string): Promise<DashboardFilters> {
+	return authedGet('/dashboard/filters', token);
+}
+
+export function getTopPlayers(
+	token: string,
+	scope: 'season' | 'gameweek',
+	team: string,
+	position: string
+): Promise<TopPlayers> {
+	const params = new URLSearchParams({ scope });
+	if (team) params.set('team', team);
+	if (position) params.set('position', position);
+	return authedGet(`/dashboard/top-players?${params}`, token);
+}
+
+export function getMetric(token: string, metricId: string): Promise<Metric> {
+	return authedGet(`/dashboard/metrics/${metricId}`, token);
+}
