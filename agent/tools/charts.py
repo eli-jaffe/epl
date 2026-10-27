@@ -68,6 +68,21 @@ def _validate_spec(spec: object) -> dict:
     return spec
 
 
+async def with_fresh_rows(spec: dict, sql: str) -> tuple[dict, list[dict]]:
+    """Run `sql` through the run_sql sandbox and return the spec with those
+    rows as its data. Shared by create_chart and the saved-chart refresh, so a
+    refresh goes through exactly the same read-only checks as the original."""
+    rows = await asyncio.to_thread(sql_tools.run_sql, sql, MAX_CHART_ROWS)
+    if not rows:
+        raise ValueError("The SQL returned no rows, so there is nothing to chart. Adjust the query.")
+    # Round-trip through JSON so dates/decimals from DuckDB become plain
+    # JSON values the browser can embed.
+    rows = json.loads(json.dumps(rows, default=str))
+    # The rows are injected here, not authored by the model: it never has to
+    # echo data back, and the spec can't carry data that didn't come from sql.
+    return {**{k: v for k, v in spec.items() if k not in ("data", "datasets")}, "data": {"values": rows}}, rows
+
+
 async def create_chart(title: str, sql: str, vega_lite_spec: object, metrics_used: list[dict]) -> dict:
     """Validate a chart, run its SQL, and stash it on the run for saving."""
     run = current_run.get()
@@ -77,16 +92,7 @@ async def create_chart(title: str, sql: str, vega_lite_spec: object, metrics_use
     spec = _validate_spec(vega_lite_spec)
     resolved, new_definitions = await metrics.resolve_metrics(metrics_used)
 
-    rows = await asyncio.to_thread(sql_tools.run_sql, sql, MAX_CHART_ROWS)
-    if not rows:
-        raise ValueError("The SQL returned no rows, so there is nothing to chart. Adjust the query.")
-    # Round-trip through JSON so dates/decimals from DuckDB become plain
-    # JSON values the browser can embed.
-    rows = json.loads(json.dumps(rows, default=str))
-
-    # The rows are injected here, not authored by the model: it never has to
-    # echo data back, and the spec can't carry data that didn't come from sql.
-    spec = {**{k: v for k, v in spec.items() if k not in ("data", "datasets")}, "data": {"values": rows}}
+    spec, rows = await with_fresh_rows(spec, sql)
 
     run.chart = {
         "title": title.strip(),
