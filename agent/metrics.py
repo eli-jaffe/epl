@@ -89,7 +89,7 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
 
 
-def _from_row(row: MetricRow) -> Metric:
+def from_row(row: MetricRow) -> Metric:
     return Metric(
         id=row.id,
         name=row.name,
@@ -112,7 +112,33 @@ async def list_metrics() -> list[Metric]:
                 select(MetricRow).where(MetricRow.status != "merged").order_by(MetricRow.created_at)
             )
         ).all()
-    return [*_CURATED, *(_from_row(r) for r in rows)]
+    # A promoted row whose snippet has since been pasted into _CURATED would
+    # otherwise appear twice; the curated copy wins (as in get_metric).
+    return [*_CURATED, *(from_row(r) for r in rows if r.id not in _CURATED_BY_ID)]
+
+
+def curated_metrics() -> tuple[Metric, ...]:
+    return _CURATED
+
+
+def curated_ids() -> set[str]:
+    return set(_CURATED_BY_ID)
+
+
+def curated_snippet(metric: Metric) -> str:
+    """Source text for a `Metric(...)` entry, ready to paste into _CURATED.
+    This is the promote step's output: the curated tier lives in git-reviewed
+    code, so promotion hands the user a snippet rather than editing code."""
+    lines = ["    Metric("]
+    for field in ("id", "name", "definition", "formula", "grain"):
+        lines.append(f"        {field}={getattr(metric, field)!r},")
+    lines.append(f"        source_views={tuple(metric.source_views)!r},")
+    if metric.caveats:
+        lines.append(f"        caveats={tuple(metric.caveats)!r},")
+    if metric.sql_expression:
+        lines.append(f"        sql_expression={metric.sql_expression!r},")
+    lines.append("    ),")
+    return "\n".join(lines)
 
 
 async def get_metric(metric_id: str) -> Metric | None:
@@ -120,7 +146,7 @@ async def get_metric(metric_id: str) -> Metric | None:
         return _CURATED_BY_ID[metric_id]
     async with async_session_maker() as session:
         row = await session.get(MetricRow, metric_id)
-    return _from_row(row) if row else None
+    return from_row(row) if row else None
 
 
 _NEW_FIELDS = ("name", "definition", "formula", "sql_expression", "grain")

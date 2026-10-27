@@ -6,8 +6,9 @@ observability). Three tables:
 - `metric`: agent-defined metrics only. Curated metrics live in code
   (agent/metrics.py) and are never rows here.
 - `chart_request`: one row per chart the agent produced, with the exact SQL
-  and Vega-Lite spec (rows are NOT stored -- they are re-derivable from the
-  SQL, and the spec's data is injected at render time).
+  and Vega-Lite spec. The spec includes the injected result rows (capped at
+  500), so reopening a chart shows the data as it was when created rather
+  than re-running the SQL against a warehouse that has since moved on.
 - `chart_request_metric`: which metrics each chart used and whether the
   agent reused an existing one or defined it in that request. The metrics
   library ("how often is each metric requested") is a GROUP BY over this.
@@ -44,7 +45,10 @@ class MetricRow(Base):
     grain: Mapped[str] = mapped_column(nullable=False)
     source_views: Mapped[list] = mapped_column(JSON, default=list)
     caveats: Mapped[list] = mapped_column(JSON, default=list)
-    # 'proposed' | 'merged' | 'promoted' (merge/promote are phase 4)
+    # 'proposed' | 'merged' | 'promoted'. Set by an admin in the metrics view:
+    # 'merged' folds a near-duplicate into `merged_into` (links are left
+    # untouched; demand is rolled up at read time so a merge can be undone);
+    # 'promoted' marks one whose snippet is queued for the curated module.
     status: Mapped[str] = mapped_column(default="proposed", nullable=False)
     merged_into: Mapped[str | None] = mapped_column(default=None)
     # Soft reference (no FK) to agent_query.query_id, like the DuckDB side.
