@@ -51,7 +51,12 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def _stream_answer(run_query: Callable[[OnStatus], Awaitable[str]]):
+async def _stream_answer(
+    run_query: Callable[[OnStatus], Awaitable[str]],
+    extra: Callable[[], dict] | None = None,
+):
+    # `extra` lets a caller (the dashboard's chart endpoint) merge more fields
+    # into the terminal answer frame, read after run_query has finished.
     # One queue carries both status updates and the terminal event (answer
     # or error) -- a plain `await queue.get()` loop, no polling, so status
     # frames reach the client the instant a phase starts rather than on
@@ -80,7 +85,7 @@ async def _stream_answer(run_query: Callable[[OnStatus], Awaitable[str]]):
             yield _sse({"type": "status", "message": payload})
             continue
         if kind == "answer":
-            yield _sse({"type": "answer", "answer": payload})
+            yield _sse({"type": "answer", "answer": payload, **(extra() if extra else {})})
         else:
             yield _sse({"type": "error", "message": payload})
         break

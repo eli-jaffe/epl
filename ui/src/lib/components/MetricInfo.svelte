@@ -17,6 +17,10 @@
 		<dd>{metric.grain}</dd>
 		<dt>Source</dt>
 		<dd>{metric.source_views.join(', ')}</dd>
+		{#if metric.sql_expression}
+			<dt>As SQL</dt>
+			<dd><code>{metric.sql_expression}</code></dd>
+		{/if}
 	</dl>
 	{#if metric.caveats.length}
 		<ul>

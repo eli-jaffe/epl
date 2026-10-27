@@ -1,20 +1,27 @@
-"""Dashboard API -- the fixed charts' data and metric explanations, see
-docs/dashboard_plan.md. No LLM involved: plain parameterized SQL over the
-consumption views, so these are cheap and deterministic.
+"""Dashboard API -- the fixed charts' data, metric explanations, and the
+agent-generated chart endpoint, see docs/dashboard_plan.md. The fixed-chart
+routes are plain parameterized SQL over the consumption views, no LLM.
 
-Routes are sync `def` (FastAPI runs them in its threadpool) because the
-DuckDB calls block; the agent tools do the same.
+Fixed-chart routes are sync `def` (FastAPI runs them in its threadpool)
+because the DuckDB calls block; the agent tools do the same. The metric and
+chart routes are async because the metric store reads Postgres.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
+from agent import charts, metrics
+from agent.api.chat import _stream_answer
 from agent.auth.models import User
 from agent.auth.users import current_active_user
 from agent.db.duckdb import get_readonly_connection
-from agent.metrics import get_metric, list_metrics
+from agent.loop import OnStatus, run_agent_query
+from agent.run_context import RunContext
 from agent.tools._common import current_season_id, fetch_dicts
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -96,13 +103,51 @@ def get_top_players(
 
 
 @router.get("/metrics")
-def get_metrics(user: User = Depends(current_active_user)) -> list[dict]:
-    return [m.to_dict() for m in list_metrics()]
+async def get_metrics(user: User = Depends(current_active_user)) -> list[dict]:
+    return [m.to_dict() for m in await metrics.list_metrics()]
 
 
 @router.get("/metrics/{metric_id}")
-def get_metric_by_id(metric_id: str, user: User = Depends(current_active_user)) -> dict:
-    metric = get_metric(metric_id)
+async def get_metric_by_id(metric_id: str, user: User = Depends(current_active_user)) -> dict:
+    metric = await metrics.get_metric(metric_id)
     if metric is None:
         raise HTTPException(status_code=404, detail="Metric not found")
     return metric.to_dict()
+
+
+class ChartRequestBody(BaseModel):
+    query: str
+    conversation_id: uuid.UUID | None = None
+
+
+@router.post("/chart")
+async def create_chart_from_prompt(
+    body: ChartRequestBody, user: User = Depends(current_active_user)
+) -> StreamingResponse:
+    """Same SSE shape as /chat (status frames, then one terminal frame), but
+    the answer frame also carries `chart` -- null if the agent answered in
+    text without producing one."""
+    run = RunContext(user_id=user.id, chart_mode=True)
+    payload: dict = {}
+
+    async def run_query(on_status: OnStatus) -> str:
+        answer = await run_agent_query(
+            user.id, body.query, on_status=on_status, conversation_id=body.conversation_id, run_ctx=run
+        )
+        # Saved here, after the loop settled on its final chart -- see
+        # agent/tools/charts.py for why not inside the tool.
+        if run.chart is not None:
+            chart_id = await charts.save_chart(run, body.query)
+            payload["chart"] = {
+                "id": str(chart_id),
+                "title": run.chart["title"],
+                "sql": run.chart["sql"],
+                "spec": run.chart["spec"],
+                "metrics": run.chart["metrics"],
+            }
+        return answer
+
+    return StreamingResponse(
+        _stream_answer(run_query, extra=lambda: {"chart": payload.get("chart")}),
+        media_type="text/event-stream",
+    )

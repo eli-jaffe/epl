@@ -90,6 +90,17 @@ async function readAnswerStream(
 	response: Response,
 	onStatus: (message: string) => void
 ): Promise<string> {
+	return (await readAnswerFrame(response, onStatus)).answer;
+}
+
+// The terminal frame of a /chat-style stream. /dashboard/chart also sets
+// `chart` on it; /chat never does.
+type AnswerFrame = { answer: string; chart?: GeneratedChart | null };
+
+async function readAnswerFrame(
+	response: Response,
+	onStatus: (message: string) => void
+): Promise<AnswerFrame> {
 	if (!response.ok) {
 		throw new Error(await readErrorDetail(response));
 	}
@@ -122,7 +133,7 @@ async function readAnswerStream(
 			if (payload.type === 'status') {
 				onStatus(payload.message as string);
 			} else if (payload.type === 'answer') {
-				return payload.answer as string;
+				return payload as AnswerFrame;
 			} else if (payload.type === 'error') {
 				throw new Error(payload.message as string);
 			}
@@ -297,7 +308,37 @@ export type Metric = {
 	source_views: string[];
 	caveats: string[];
 	status: string;
+	sql_expression?: string | null;
 };
+
+// A chart the agent built for a prompt (POST /dashboard/chart). `spec` is a
+// complete Vega-Lite spec with the rows already inlined as data.values;
+// styling is applied client-side at render time.
+export type GeneratedChart = {
+	id: string;
+	title: string;
+	sql: string;
+	spec: Record<string, any>;
+	metrics: (Metric & { is_new: boolean })[];
+};
+
+export async function askForChartStreaming(
+	query: string,
+	token: string,
+	conversationId: string,
+	onStatus: (message: string) => void
+): Promise<{ answer: string; chart: GeneratedChart | null }> {
+	const response = await fetch('/dashboard/chart', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({ query, conversation_id: conversationId })
+	});
+	const frame = await readAnswerFrame(response, onStatus);
+	return { answer: frame.answer, chart: frame.chart ?? null };
+}
 
 async function authedGet<T>(path: string, token: string): Promise<T> {
 	const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });

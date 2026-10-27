@@ -28,7 +28,8 @@ from datetime import datetime, timezone
 
 from agent import llm, observability
 from agent.glossary import DOMAIN_GLOSSARY
-from agent.tools.registry import TOOL_REGISTRY, dispatch, to_claude_tools
+from agent.run_context import RunContext, current_run
+from agent.tools.registry import CHART_TOOLS, TOOL_REGISTRY, dispatch, to_claude_tools
 
 MAX_OUTER_RETRIES = 3
 MAX_EXECUTE_ROUNDS = 5
@@ -69,7 +70,44 @@ TOOL_STATUS_MESSAGES = {
     "get_value_analysis": "Analyzing value for money...",
     "get_schema": "Checking the data...",
     "run_sql": "Running a custom data query...",
+    "list_metrics": "Checking existing metrics...",
+    "create_chart": "Building your chart...",
 }
+
+# Chart mode (the dashboard prompt box, see docs/dashboard_plan.md section 3):
+# same loop, plus list_metrics/create_chart and these instructions.
+CHART_INSTRUCTIONS = """\
+You are building ONE chart for a dashboard, not just answering in text.
+
+1. Call list_metrics first. If an existing metric matches what the user wants, \
+even approximately, reuse it by metric_id and build your SQL from its \
+sql_expression. Only if none fits, define a new metric (name, plain-English \
+definition, formula, the SQL expression, and the grain) in metrics_used. Never \
+redefine a metric that already exists under a similar name.
+2. Optionally explore with get_schema/run_sql, then call create_chart ONCE with \
+the final query and spec. The SQL must be one read-only SELECT over the v_player_* \
+views, returning one row per mark (max 500 rows). Group and join players by \
+player_code, not web_name, and include a readable name column for the chart.
+3. The Vega-Lite spec must NOT include data, width, height, colors, background or \
+config -- rows are injected and the dashboard applies its own theme. Set only the \
+mark and encoding (fields, types, sort, tooltips). Use a `color` field encoding \
+only to separate at most 6 categories (e.g. position, or 2-3 players being compared), \
+with no explicit scale range; with more categories, or when each bar is already \
+labelled, leave color off -- the palette has 8 hues and repeats past that. No urls \
+or links.
+If create_chart returns an error, fix the problem and call it again."""
+
+CHART_SYNTHESIS_INSTRUCTIONS = """\
+Also explain the chart's numbers. For every metric in the create_chart result: if \
+it was an existing metric, say you used it and give its calculation in one sentence \
+(and say plainly where it only approximately matches what was asked). If it was \
+newly defined, say you defined it, and state the definition and formula clearly so \
+the user can check it is what they meant. If no chart was created, say so and why."""
+
+
+def _chart_mode() -> bool:
+    run = current_run.get()
+    return bool(run and run.chart_mode)
 
 
 async def _emit(on_status: OnStatus | None, message: str) -> None:
@@ -136,7 +174,7 @@ async def _plan(
     on_status: OnStatus | None = None,
 ) -> tuple[str, int]:
     await _emit(on_status, STATUS_MESSAGES["plan"])
-    tool_names = ", ".join(t.name for t in TOOL_REGISTRY)
+    tool_names = ", ".join(t.name for t in [*TOOL_REGISTRY, *(CHART_TOOLS if _chart_mode() else [])])
     system = (
         f"{DOMAIN_GLOSSARY}\n\nGiven the question and your prior reasoning, "
         f"describe which tools you plan to call and in what order, in 2-4 "
@@ -169,12 +207,18 @@ async def _execute(
     messages: list[dict] = [
         {"role": "user", "content": f"User question: {query_text}\n\nYour plan: {plan_text}"}
     ]
-    tools = to_claude_tools()
+    chart_mode = _chart_mode()
+    tools = to_claude_tools([t.name for t in [*TOOL_REGISTRY, *CHART_TOOLS]] if chart_mode else None)
+    if chart_mode:
+        system += f"\n\n{CHART_INSTRUCTIONS}"
+    # A create_chart call carries a whole spec plus SQL in its arguments;
+    # 1024 would truncate it mid-JSON.
+    max_tokens = 4096 if chart_mode else 1024
     results_summary: list[str] = []
 
     for round_num in range(MAX_EXECUTE_ROUNDS):
         round_started_at = datetime.now(timezone.utc)
-        response = await llm.call_claude(system=system, messages=messages, tools=tools, max_tokens=1024)
+        response = await llm.call_claude(system=system, messages=messages, tools=tools, max_tokens=max_tokens)
         tool_uses = [b for b in response.content if b.type == "tool_use"]
 
         step_id = await observability.log_step(
@@ -307,6 +351,8 @@ async def _synthesize(
         "available, say what's missing as part of that answer, rather than "
         "guessing or making up numbers."
     )
+    if _chart_mode():
+        system += f"\n\n{CHART_SYNTHESIS_INSTRUCTIONS}"
     messages = [
         {
             "role": "user",
@@ -371,8 +417,13 @@ async def run_agent_query(
     query_text: str,
     on_status: OnStatus | None = None,
     conversation_id: uuid.UUID | None = None,
+    run_ctx: RunContext | None = None,
 ) -> str:
     query_id = await observability.start_query(user_id, query_text, conversation_id)
+    if run_ctx is not None:
+        # Same object the caller holds, so it can read run_ctx.chart afterwards.
+        run_ctx.query_id = query_id
+        current_run.set(run_ctx)
     return await _run_loop(query_id, query_text, on_status)
 
 
