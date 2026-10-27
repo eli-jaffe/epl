@@ -5,8 +5,12 @@
 		askForChartStreaming,
 		getDashboardFilters,
 		getMetric,
+		getMyChart,
 		getTopPlayers,
+		listMyCharts,
+		refreshMyChart,
 		type DashboardFilters,
+		type SavedChartSummary,
 		type GeneratedChart as GeneratedChartData,
 		type Metric,
 		type TopPlayers
@@ -41,8 +45,15 @@
 		error: boolean;
 		infoOpen: boolean;
 		sqlOpen: boolean;
+		savedAt?: string; // set when reopened from My charts
+		refreshing?: boolean;
+		refreshedAt?: string;
+		refreshError?: string;
 	};
 	let generated: Generated[] = $state([]);
+	let saved: SavedChartSummary[] = $state([]);
+	let savedError = $state('');
+	let openingId = $state('');
 	let chartPrompt = $state('');
 	let building = $state(false);
 	// One id per page load groups this session's prompts for admin troubleshooting.
@@ -72,12 +83,59 @@
 			item.chart = result.chart;
 			// The explanation is the point of the feature; show it by default.
 			item.infoOpen = result.chart !== null;
+			if (result.chart) loadSaved();
 		} catch (e) {
 			item.answer = e instanceof Error ? e.message : 'Something went wrong.';
 			item.error = true;
 		} finally {
 			item.status = undefined;
 			building = false;
+		}
+	}
+
+	async function loadSaved() {
+		try {
+			saved = await listMyCharts(token);
+			savedError = '';
+		} catch (e) {
+			savedError = (e as Error).message;
+		}
+	}
+
+	// Puts a saved chart into the same card list as freshly built ones.
+	async function openSaved(summary: SavedChartSummary) {
+		openingId = summary.id;
+		try {
+			const chart = await getMyChart(token, summary.id);
+			generated.unshift({
+				prompt: summary.prompt,
+				answer: '',
+				chart,
+				error: false,
+				infoOpen: true,
+				sqlOpen: false,
+				savedAt: chart.created_at
+			});
+		} catch (e) {
+			savedError = (e as Error).message;
+		} finally {
+			openingId = '';
+		}
+	}
+
+	// Swaps in rows from today's warehouse; the saved copy is untouched.
+	async function refreshItem(item: Generated) {
+		if (!item.chart) return;
+		item.refreshing = true;
+		item.refreshError = '';
+		try {
+			const result = await refreshMyChart(token, item.chart.id);
+			item.chart.spec = result.spec;
+			item.refreshedAt = result.refreshed_at;
+		} catch (e) {
+			item.refreshError = (e as Error).message;
+		} finally {
+			item.refreshing = false;
 		}
 	}
 
@@ -89,6 +147,7 @@
 		}
 		token = stored;
 		ready = true;
+		loadSaved();
 		try {
 			filters = await getDashboardFilters(stored);
 		} catch (e) {
@@ -219,9 +278,39 @@
 				<button type="submit" disabled={building || !chartPrompt.trim()}>Create chart</button>
 			</form>
 
+			<h3>My charts</h3>
+			{#if savedError}
+				<p class="error">{savedError}</p>
+			{:else if saved.length === 0}
+				<p class="muted">Charts you create are saved here so you can reopen them later.</p>
+			{:else}
+				<ul class="saved">
+					{#each saved as s (s.id)}
+						<li>
+							<div>
+								<strong>{s.title}</strong>
+								<span class="muted">{new Date(s.created_at).toLocaleDateString()} · {s.prompt}</span>
+							</div>
+							<button
+								type="button"
+								disabled={openingId === s.id || generated.some((g) => g.chart?.id === s.id)}
+								onclick={() => openSaved(s)}
+							>
+								{openingId === s.id ? 'Opening…' : 'Open'}
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+
 			{#each generated as item (item)}
 				<div class="card generated">
 					<p class="prompt">{item.prompt}</p>
+					{#if item.refreshedAt}
+						<p class="muted small">Refreshed {new Date(item.refreshedAt).toLocaleString()} with current data</p>
+					{:else if item.savedAt}
+						<p class="muted small">Saved {new Date(item.savedAt).toLocaleString()} · data as of then</p>
+					{/if}
 					{#if item.status}
 						<p class="muted">{item.status}</p>
 					{:else}
@@ -235,7 +324,11 @@
 									aria-expanded={item.infoOpen}
 									onclick={() => (item.infoOpen = !item.infoOpen)}>ⓘ</button
 								>
+								<button type="button" class="refresh" disabled={item.refreshing} onclick={() => refreshItem(item)}>
+									{item.refreshing ? 'Refreshing…' : '↻ Refresh data'}
+								</button>
 							</div>
+							{#if item.refreshError}<p class="error">{item.refreshError}</p>{/if}
 							{#if item.infoOpen}
 								{#each item.chart.metrics as metric (metric.id)}
 									<MetricInfo {metric} />
@@ -380,6 +473,35 @@
 	}
 	.generated {
 		margin-top: 1rem;
+	}
+	h3 {
+		margin: 1.25rem 0 0.5rem;
+		font-size: 0.95rem;
+	}
+	.saved {
+		list-style: none;
+		margin: 0 0 1rem;
+		padding: 0;
+	}
+	.saved li {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.5rem 0;
+		border-bottom: 1px solid var(--grid);
+	}
+	.saved span {
+		display: block;
+		font-size: 0.8rem;
+	}
+	.refresh {
+		margin-left: auto;
+		font-size: 0.85rem;
+	}
+	.small {
+		font-size: 0.8rem;
+		margin: 0 0 0.5rem;
 	}
 	.prompt {
 		margin: 0 0 0.5rem;

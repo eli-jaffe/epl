@@ -367,3 +367,62 @@ export function getTopPlayers(
 export function getMetric(token: string, metricId: string): Promise<Metric> {
 	return authedGet(`/dashboard/metrics/${metricId}`, token);
 }
+
+// ---- My charts ----------------------------------------------------------
+
+export type SavedChartSummary = { id: string; title: string; prompt: string; created_at: string };
+
+export function listMyCharts(token: string): Promise<SavedChartSummary[]> {
+	return authedGet('/dashboard/charts', token);
+}
+
+// A reopened chart shows the rows as they were when it was created.
+export function getMyChart(token: string, chartId: string): Promise<GeneratedChart & { created_at: string }> {
+	return authedGet(`/dashboard/charts/${chartId}`, token);
+}
+
+// Re-runs the chart's saved SQL; the saved copy itself is not changed.
+export async function refreshMyChart(
+	token: string,
+	chartId: string
+): Promise<{ spec: Record<string, any>; refreshed_at: string }> {
+	return adminPost(`/dashboard/charts/${chartId}/refresh`, token);
+}
+
+// ---- Admin: metrics library --------------------------------------------
+
+export type AdminMetric = Metric & {
+	requests: number; // includes requests for metrics merged into this one
+	own: { defined: number; reused: number };
+	merged_from: string[];
+	merged_into: string | null;
+	snippet: string | null; // set once promoted
+};
+
+export function listAdminMetrics(token: string): Promise<AdminMetric[]> {
+	return authedGet('/dashboard/admin/metrics', token);
+}
+
+async function adminPost<T>(path: string, token: string, body?: unknown): Promise<T> {
+	const response = await fetch(path, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+		body: body === undefined ? undefined : JSON.stringify(body)
+	});
+	if (!response.ok) {
+		throw new Error(await readErrorDetail(response));
+	}
+	return (await response.json()) as T;
+}
+
+export function mergeMetric(token: string, metricId: string, into: string): Promise<{ ok: true }> {
+	return adminPost(`/dashboard/admin/metrics/${metricId}/merge`, token, { into });
+}
+
+export function unmergeMetric(token: string, metricId: string): Promise<{ ok: true }> {
+	return adminPost(`/dashboard/admin/metrics/${metricId}/unmerge`, token);
+}
+
+export function promoteMetric(token: string, metricId: string): Promise<{ ok: true; snippet: string }> {
+	return adminPost(`/dashboard/admin/metrics/${metricId}/promote`, token);
+}

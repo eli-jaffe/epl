@@ -34,7 +34,8 @@ export default defineConfig({
 			'/admin/queries': 'http://localhost:8000',
 			// Same page-vs-API clash as /admin: /dashboard is a page, only
 			// these sub-paths are the backend (regex key, '^' prefix).
-			'^/dashboard/(filters|top-players|metrics|chart)': 'http://localhost:8000'
+			// (`chart` also covers /dashboard/charts.)
+			'^/dashboard/(filters|top-players|metrics|chart|admin)': 'http://localhost:8000'
 		}
 	}
 });

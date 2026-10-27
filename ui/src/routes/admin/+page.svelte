@@ -90,7 +90,7 @@
 	<main>
 		<header>
 			<h1>Admin: Agent Queries</h1>
-			<a href="/">Back to chat</a>
+			<span><a href="/admin/metrics">Metrics library</a> · <a href="/">Back to chat</a></span>
 		</header>
 
 		{#if !authorized}
