@@ -12,7 +12,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from agent.tools import players, sql
+from agent.tools import charts, players, sql
 
 
 @dataclass(frozen=True)
@@ -152,12 +152,46 @@ TOOL_REGISTRY: list[ToolSpec] = [
     ),
 ]
 
-TOOLS_BY_NAME: dict[str, ToolSpec] = {tool.name: tool for tool in TOOL_REGISTRY}
+# Chart-mode tools (the dashboard prompt box) -- kept out of TOOL_REGISTRY
+# so /chat and the MCP server, which both build from it, never see them.
+# They need a RunContext (agent/run_context.py), which only a chart run has.
+CHART_TOOLS: list[ToolSpec] = [
+    ToolSpec(
+        "list_metrics",
+        "List every known metric (curated and previously defined) with its id, name and definition. Call this FIRST, before defining any metric.",
+        charts.list_metrics,
+        {"type": "object", "properties": {}, "required": []},
+    ),
+    ToolSpec(
+        "create_chart",
+        "Create the dashboard chart. Runs `sql`, injects the resulting rows into the Vega-Lite spec as its data, and records which metrics the chart uses. Call once with the final query and spec.",
+        charts.create_chart,
+        {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short chart title."},
+                "sql": {"type": "string", "description": "Single read-only SELECT returning one row per mark (max 500 rows)."},
+                "vega_lite_spec": {
+                    "type": "object",
+                    "description": "Vega-Lite v6 spec WITHOUT a `data` property -- the rows from `sql` are injected. Reference result columns by name. No urls or links.",
+                },
+                "metrics_used": {
+                    "type": "array",
+                    "description": "Every metric the chart's values are based on. Each entry is {\"metric_id\": \"<existing id>\"} to reuse one, or {\"new\": {name, definition, formula, sql_expression, grain, source_views?, caveats?}} to define one. source_views and caveats are arrays of strings; the other fields are plain strings.",
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["title", "sql", "vega_lite_spec", "metrics_used"],
+        },
+    ),
+]
+
+TOOLS_BY_NAME: dict[str, ToolSpec] = {tool.name: tool for tool in [*TOOL_REGISTRY, *CHART_TOOLS]}
 
 
 def to_claude_tools(names: list[str] | None = None) -> list[dict]:
     """TOOL_REGISTRY (or a subset, by name) in the shape Claude's `tools=`
-    API parameter expects.
+    API parameter expects. Chart tools are only included when named.
     """
     specs = TOOL_REGISTRY if names is None else [TOOLS_BY_NAME[n] for n in names]
     return [
@@ -182,7 +216,12 @@ async def dispatch(name: str, **kwargs: Any) -> dict:
     if tool is None:
         return {"success": False, "data": None, "error": f"Unknown tool: {name}"}
     try:
-        data = await asyncio.to_thread(tool.fn, **kwargs)
+        # Chart tools are async (they read Postgres); everything else is sync
+        # and blocking, so it goes to a thread.
+        if asyncio.iscoroutinefunction(tool.fn):
+            data = await tool.fn(**kwargs)
+        else:
+            data = await asyncio.to_thread(tool.fn, **kwargs)
         return {"success": True, "data": data, "error": None}
     except Exception as e:  # noqa: BLE001 -- deliberate: see docstring
         return {"success": False, "data": None, "error": f"{type(e).__name__}: {e}"}
