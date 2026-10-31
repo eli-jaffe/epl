@@ -1,7 +1,10 @@
 # Agent + UI Architecture Plan (components 2 & 3)
 
-**Status: agent backend built and verified end-to-end for real, including
-its MCP surface; a minimal chat UI is built and verified end-to-end.** This
+**Status (updated 2026-10-31): agent backend built and verified end-to-end
+for real, including its MCP surface; chat UI, stale-query recovery, and the
+on-demand dashboard with agent-generated charts are built and merged (see
+`docs/dashboard_plan.md` and `docs/stale_queries_and_tracking_ids_plan.md`
+for those).** This
 doc is both the original design plan and the running record
 of what happened building it — decisions are dated, and later entries
 ("Corrected", "Superseded", "Implemented") amend earlier ones in place
@@ -11,7 +14,15 @@ Covers components 2 (agent) and 3 (UI) from `CLAUDE.md`'s build order;
 component 1 (data pipeline) is built and out of scope here except as the
 thing this layer queries.
 
-## Implementation status (2026-09-21)
+## Implementation status (2026-09-21; amended 2026-10-31)
+
+**Added since this snapshot (all merged to `main`):** stale-query detection
++ Restart/Cancel for interrupted queries (PR #6); the `/dashboard` page,
+`list_metrics`/`create_chart` tools (`agent/tools/charts.py`), curated +
+Postgres-backed proposed metric store (`agent/metrics.py`,
+`agent/db/dashboard_models.py`), `agent/api/dashboard.py`, chat history
+persistence, and the admin query/metrics UIs (PRs #7-#9). The bullets below
+are the original 2026-09-21 snapshot and were left as written.
 
 What actually exists right now, as a scannable summary — details and the
 "why" behind each are in the sections below.
@@ -72,8 +83,8 @@ browser-automation tool is connected to this environment yet).
   claims no fixture data exists at all. Candidate v2 fixes: cache schema
   across rounds/retries, carry forward partial tool results on retry,
   and/or a multi-team `get_fixture_difficulty_all_teams` fixed tool.
-- **`agent_step.started_at`/`finished_at` are always identical, found
-  2026-09-22** — `observability.log_step()` (`agent/observability.py`)
+- **[Fixed 2026-09-22, same day it was found — `237302b`] `agent_step.started_at`/
+  `finished_at` were always identical** — `observability.log_step()` (`agent/observability.py`)
   computes a single `now = _now()` and assigns it to both columns on the
   same `AgentStep` row, so per-step duration can never be recovered from the
   trace. Query-level timing still works (`agent_query.started_at`/
@@ -82,7 +93,8 @@ browser-automation tool is connected to this environment yet).
   — only per-phase/per-tool-call duration is the gap. Fix: capture a real
   start timestamp before each step's work begins (reason/plan/execute/
   reflect/synthesize call sites in `agent/loop.py`) and pass it into
-  `log_step()` instead of stamping both fields at write time.
+  `log_step()` instead of stamping both fields at write time. (Resolved: `log_step()`
+  now takes `started_at` and every call site in `agent/loop.py` passes one.)
 - Three `agent/loop.py` bugs found and fixed while building `ask_epl_agent`
   (2026-09-20) are worth knowing about even though they're resolved:
   `_synthesize` could answer the internal reflection status instead of the
@@ -97,7 +109,10 @@ browser-automation tool is connected to this environment yet).
   sandbox — needs session context threaded into the tool layer, a real
   architecture decision, not bundled into `run_sql`'s implementation).
 - The `clarify` tool (category E).
-- Any chart/dashboard generation (category C/D) — no chart tool exists yet.
+- ~~Any chart/dashboard generation (category C/D)~~ — **built 2026-10-25/26**;
+  see `docs/dashboard_plan.md`. Still unbuilt from that area: dashboard
+  "spin-up" as an intent-detected orchestration path (category D below) —
+  today's `/dashboard` is a fixed page plus an ask-for-a-chart box.
 - The observability sync job's cron/launchd schedule (the script works when
   run manually; not wired to run automatically).
 - Alembic migrations (`main.py` still uses `create_all()` at startup).
@@ -144,7 +159,9 @@ from Claude Code/Desktop.
 - **Persistent UI: chat-first**, not a stats dashboard with chat bolted on.
 - **Live FPL API connector is explicitly deferred** — this layer can be built
   and demoed against historical data now; live data is a parallel track, see
-  `docs/live_api_connector_plan.md`.
+  `docs/live_api_connector_plan.md`. (2026-10-31: the stats refresh is merged,
+  PRs #10-#11, and 2026-27 GW1-8 are loaded as `live_api` rows, so the agent
+  now sees current-season data; the market backfill/snapshot are not built.)
 - **Query tracking and observability are one system, not two.** Every user
   query, agent step/decision, tool call, and output is logged from the start.
   "Which questions recur enough to become fixed functions" is just an
@@ -261,12 +278,16 @@ still deferred.
   **Now load-bearing given multi-user**, not optional hardening — one user's
   query must not be able to affect another's session or the underlying data.
 
-### C. Chart tool — not built yet
+### C. Chart tool — built (2026-10-26)
 
-LLM emits a raw Vega-Lite JSON spec directly (see Decisions above for the
+`list_metrics` + `create_chart` (`agent/tools/charts.py`); the server runs
+the agent's SQL through the `run_sql` sandbox and injects rows into the spec.
+Details: `docs/dashboard_plan.md` §3. LLM emits a raw Vega-Lite JSON spec directly (see Decisions above for the
 future `render_chart()` alternative if this proves insufficient).
 
-### D. Dashboard spin-up — not built yet
+### D. Dashboard spin-up — partly built
+The `/dashboard` page (fixed charts, filters, ask-for-a-chart, saved charts)
+exists; the intent-check "build me a dashboard about X" path below does not.
 
 Not a single LLM-invoked tool — an orchestration path. An intent check
 (report vs. "build me a dashboard about X") that, on the dashboard branch,

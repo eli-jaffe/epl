@@ -9,8 +9,11 @@ Premier League data to support fantasy decisions (transfers, captaincy,
 differentials). Three components, in build order:
 
 1. **Data** (built) — historical player/team/fixture data in a DuckDB
-   warehouse, refreshed periodically. Live in-season data is planned but not
-   built.
+   warehouse, refreshed periodically. Live in-season data is partly built:
+   `ingestion/live_api.py` + `ingestion/load_live.py` (PRs #10-#11) refresh
+   finished 2026-27 gameweeks on demand (loaded through GW8 on the real DB).
+   Still unbuilt: the weekly price/ownership/transfers backfill, the daily
+   market snapshot (`fact_player_snapshot` exists but is empty), scheduling.
 2. **Agent** (`agent/`, in progress) — takes a user query, pulls the relevant
    data, runs the appropriate analysis, visualizes it, and returns an
    insight. Will also be able to spin up an on-demand dashboard UI for the
@@ -19,12 +22,17 @@ differentials). Three components, in build order:
    scaffold for what the on-demand dashboard looks like — it determines the
    data/analysis specifics per query but isn't reinventing that output
    architecture from scratch each time. Auth, the tool layer, the agent loop,
-   observability, and an MCP server are built; chart/dashboard generation
-   isn't yet. Status/known issues: `docs/agent_ui_architecture_plan.md`.
+   observability, an MCP server, and agent-generated charts (`list_metrics` /
+   `create_chart` tools, Vega-Lite specs, a curated + agent-proposed metric
+   store) are built. Status/known issues:
+   `docs/agent_ui_architecture_plan.md`; dashboard design: `docs/dashboard_plan.md`.
 3. **UI** (`ui/`, in progress) — the on-demand dashboard from component 2
    comes first; a persistent entry-point web UI is a later, secondary goal.
-   A minimal chat-first frontend (register/login + ask-the-agent) is built;
-   the on-demand dashboard isn't. See "Running the app locally" below.
+   A chat-first frontend (register/login, ask-the-agent, chat history, admin
+   query viewer) and a `/dashboard` page (two fixed top-scorer charts with
+   team/position filters, metric info popovers, ask-for-a-chart, saved "My
+   charts", admin metric library) are built. See "Running the app locally"
+   below.
 
 All three are expected to live in this repo, in directories added as each
 component is built (e.g. `ingestion/` today, `agent/` and `ui/` later) — this
@@ -34,8 +42,9 @@ Primary language is Python for the data/agent layers. The agent backend
 (`agent/`) is FastAPI + `fastapi-users` (self-hosted Postgres for
 auth/app-state) + the Claude API, with an MCP server alongside it. The
 frontend (`ui/`) is SvelteKit + TypeScript + npm, calling the backend over
-HTTP. Chart/dashboard tooling for the on-demand dashboard is still undecided
-— ask before assuming a choice there.
+HTTP. Charts are Vega-Lite specs rendered with `vega-embed` (decided
+2026-10-25, for both fixed and agent-generated charts); ask before assuming
+a choice for anything else still open.
 
 ## Repo split: code vs. data
 
@@ -48,7 +57,8 @@ it's rebuilt from `epl-data` plus the scripts here, so treat it as
 disposable/regeneratable, never as a thing to hand-edit or back up.
 
 Full data landscape, schema diagrams, and pipeline flow: `README.md`. Live
-API connector design (planned, not built): `docs/live_api_connector_plan.md`.
+API connector plan, refresh command and build checklist:
+`docs/live_api_connector_plan.md`.
 Architecture research for the agent/UI layers: `references/`.
 
 ## Data-modeling gotchas (read before touching ingestion or schema code)
@@ -96,8 +106,8 @@ than leaving them running across sessions.
    `ANTHROPIC_API_KEY` — without it, the agent loop's Claude API calls fail.
    Health check: `curl http://localhost:8000/health`.
 3. **Frontend** (SvelteKit, from `ui/`): `npm run dev` — serves on
-   `http://localhost:5173` and dev-proxies `/auth`, `/chat`, `/users` to the
-   backend on `:8000` (see `ui/vite.config.ts`), so the backend must already
+   `http://localhost:5173` and dev-proxies `/auth`, `/chat`, `/users`, `/admin/queries` and the
+   `/dashboard/*` API sub-paths to the backend on `:8000` (see `ui/vite.config.ts`), so the backend must already
    be running first. No separate build step needed for local dev.
 4. **MCP server** (for an MCP client like Claude Code/Claude Desktop, not
    run standalone in a terminal): point the client's MCP config at
@@ -111,7 +121,7 @@ than leaving them running across sessions.
 - No test suite or linter is configured yet — don't assume `pytest`/`ruff`
   exist; check before referencing them. The agent/UI stack itself is decided
   (see above), but ask before assuming a choice for anything still open
-  (e.g. chart/dashboard tooling) rather than picking one.
+  (e.g. production auth/proxy setup) rather than picking one.
 - `venv/` and `db/*.duckdb` are gitignored; don't commit either.
 - Match the existing style in `db/schema.sql` and `ingestion/*.py`: header
   comments explain *why* a grain/key choice was made, not what the SQL/code

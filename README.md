@@ -34,20 +34,21 @@ for either):
   January transfer window, season end). Fine for historical backfill, not
   sufficient alone for in-season freshness.
 - **Live current season** — `fantasy.premierleague.com/api/*` directly (the same
-  API the repo above scrapes). Not yet integrated — this is the next milestone,
-  needed to get gameweek-fresh data during the season.
+  API the repo above scrapes). Stats are integrated on demand
+  (`ingestion/live_api.py` then `load_live.py`, finished gameweeks only);
+  market data (price/ownership/transfers) is not yet.
 
-**Currently loaded** (11 seasons, one full historical backfill run):
+**Currently loaded** (11 seasons: historical backfill plus 2026-27 GW1-8 from the live API, as of 2026-10-31):
 
 | Table | Rows | Grain |
 |---|--:|---|
 | `dim_season` | 11 | one row per season |
 | `dim_team` | 30 | one row per club ever seen (any season) |
-| `dim_player` | 2,743 | one row per player ever seen (any season) |
+| `dim_player` | 2,778 | one row per player ever seen (any season) |
 | `fact_team_season` | 160 | team x season |
-| `fact_player_season` | 7,974 | player x season |
+| `fact_player_season` | 8,027 | player x season |
 | `fact_fixture` | 3,346 | match x season |
-| `fact_player_gameweek` | 254,500 | player x fixture (see grain note below) |
+| `fact_player_gameweek` | 259,110 | player x fixture (see grain note below) |
 
 **Known, bounded data gaps** — real limitations in the source data, not bugs:
 
@@ -75,7 +76,7 @@ for either):
 
 ```
  vaastav/Fantasy-Premier-League (GitHub)      fantasy.premierleague.com/api/*
-              |                                    (live API -- not yet wired up)
+              |                                    (live API -- stats refresh built; market backfill/snapshot not)
               |  unauthenticated HTTPS, no credentials of any kind
               v
  +--------------------------------------------------------------+
@@ -112,7 +113,7 @@ for either):
 
 Every row in every table also carries `source` (`'github_repo'` | `'live_api'`),
 `source_ref` (the commit SHA, or an API fetch timestamp), and `loaded_at` — so
-once the live API path exists, historical and current-season rows sit side by
+now that the live API loader exists, historical and current-season rows sit side by
 side in the same tables, each traceable back to exactly where and when it came
 from.
 
@@ -304,12 +305,20 @@ python3 ingestion/load_historical.py
 
 ## Roadmap
 
-- [ ] Live FPL API connector for current-season/gameweek refreshes (`source = 'live_api'`)
+- [~] Live FPL API connector for current-season/gameweek refreshes (`source = 'live_api'`) —
+  stats refresh is built (`ingestion/live_api.py` extract + `load_live.py`
+  loader, PRs #10-#11; finished gameweeks only, on demand). Not built: weekly
+  price/ownership/transfers backfill, the daily market snapshot
+  (`fact_player_snapshot`, currently empty) and its view, scheduling.
+  Checklist: `docs/live_api_connector_plan.md`.
 - [~] LLM-driven agent for exploring the data / decision support (`agent/`) —
-  auth, tool layer, agent loop, observability, and an MCP server (including
-  `ask_epl_agent`, the agent-level tool) are built and verified against live
-  data; see `docs/agent_ui_architecture_plan.md` for status/known issues.
+  auth, tool layer, agent loop, observability, an MCP server (including
+  `ask_epl_agent`, the agent-level tool), and agent-generated Vega-Lite charts
+  with a metric store (`list_metrics`/`create_chart`) are built and verified
+  against live data; see `docs/agent_ui_architecture_plan.md` for status/known issues.
 - [~] Frontend for delivering agent output (`ui/`, SvelteKit + TypeScript) —
-  register/login + a basic chat page against `/chat` are built and verified
-  end-to-end; still needs richer UI, the on-demand dashboard, and a
-  production auth/proxy story (currently dev-only via Vite's proxy).
+  register/login, chat with history, an admin query viewer, and the
+  `/dashboard` page (fixed top-scorer charts + filters, metric info popovers,
+  ask-for-a-chart, saved charts, admin metric library; see
+  `docs/dashboard_plan.md`) are built; still needs a production auth/proxy
+  story (currently dev-only via Vite's proxy).
