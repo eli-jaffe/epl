@@ -161,6 +161,12 @@ CREATE TABLE fact_player_gameweek (
     saves                         INTEGER,
     penalties_saved               INTEGER,
     penalties_missed              INTEGER,
+    -- Defensive-action stats FPL only recently began publishing: NULL for
+    -- seasons loaded from the historical CSVs, populated from live_api rows.
+    tackles                       INTEGER,
+    recoveries                    INTEGER,
+    clearances_blocks_interceptions INTEGER,
+    defensive_contribution        INTEGER,
     source                        VARCHAR NOT NULL,
     source_ref                    VARCHAR,
     loaded_at                     TIMESTAMP NOT NULL,
@@ -168,6 +174,31 @@ CREATE TABLE fact_player_gameweek (
     -- double gameweeks mean a player can have two rows for the same
     -- (season_id, gameweek, player_code) — one per fixture played that week.
     PRIMARY KEY (season_id, gameweek, player_code, fixture_id)
+);
+
+-- Point-in-time market snapshots from the live API's bootstrap-static (one
+-- row per player per pull). Separate from fact_player_gameweek because the
+-- grain differs: snapshots are taken on a schedule (daily), not per fixture,
+-- and the API only exposes *today's* price/ownership — they can't be
+-- backfilled, so past gameweeks' market columns come from element-summary
+-- instead. A view collapsing the last snapshot per gameweek into
+-- fact_player_gameweek's value/selected/transfers_* shape is planned but not
+-- built yet (docs/live_api_connector_plan.md, item S3).
+CREATE TABLE fact_player_snapshot (
+    season_id            VARCHAR NOT NULL REFERENCES dim_season(season_id),
+    player_code          INTEGER NOT NULL REFERENCES dim_player(player_code),
+    snapshot_at          TIMESTAMP NOT NULL,
+    gameweek             INTEGER,           -- the API's current event at snapshot time
+    now_cost             INTEGER,           -- price, GBP 0.1m units (same as value)
+    selected_by_percent  DOUBLE,
+    total_players        BIGINT,            -- FPL managers; selected ~= pct * total / 100
+    transfers_in_event   BIGINT,            -- this gameweek's flow so far
+    transfers_out_event  BIGINT,
+    cost_change_event    INTEGER,           -- price change this gameweek, 0.1m units
+    source               VARCHAR NOT NULL,
+    source_ref           VARCHAR,
+    loaded_at            TIMESTAMP NOT NULL,
+    PRIMARY KEY (season_id, player_code, snapshot_at)
 );
 
 -- ------------------------------------------------------------------
