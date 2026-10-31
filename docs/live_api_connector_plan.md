@@ -231,11 +231,11 @@ not just this list.
 - [ ] **S4** Update `README.md` schema diagram/tables
 
 ### Ingestion A — stats refresh (`ingestion/load_live.py`)
-- [ ] **A1** Read latest `raw/live_api/<ts>/` + manifest. Only consider
+- [x] **A1** (`latest_pull_dir()` in `load_live.py`) Read latest `raw/live_api/<ts>/` + manifest. Only consider
       directories **without** the `.partial` suffix (extract renames on success;
       a leftover `.partial` is a failed pull and safe to delete)
-- [ ] **A2** Upsert `dim_season` (current; flip previous `is_current` to false)
-- [ ] **A3** Upsert `dim_team`, `dim_player` from bootstrap `teams`/`elements`
+- [x] **A2** (in `load_live.py`) Upsert `dim_season` (current; flip previous `is_current` to false)
+- [x] **A3** (in `load_live.py`) Upsert `dim_team`, `dim_player` from bootstrap `teams`/`elements`
 - [ ] **A4** Upsert `fact_team_season`, `fact_player_season` (2026-27 only;
       cast string numerics)
 - [ ] **A5** Upsert `fact_fixture` from `fixtures.json` (scores NULL for
@@ -267,7 +267,8 @@ not just this list.
 - [ ] **C4** Time a small batch first to confirm no 429s
 
 ### Reconciliation & history (added 2026-10-31; A3 depends on R1)
-- [ ] **R1** New-player + `dim_player` reconciliation (needed inside A3). The
+- [x] **R1** (built 2026-10-31 in `ingestion/load_live.py`, dims only; tested on a
+      DB copy, **not yet run against `db/epl.duckdb`**) New-player + `dim_player` reconciliation (needed inside A3). The
       live `elements` carry every `dim_player` column: `first_name`,
       `second_name`, `web_name`, `birth_date` (655/669 populated), `region`.
       Proposed rule (confirm with the user): upsert on `player_code`; **insert**
