@@ -181,8 +181,9 @@ CREATE TABLE fact_player_gameweek (
 -- grain differs: snapshots are taken on a schedule (daily), not per fixture,
 -- and the API only exposes *today's* price/ownership — they can't be
 -- backfilled, so past gameweeks' market columns come from element-summary
--- instead. A view (see ingestion plan) collapses the last snapshot per
--- gameweek into fact_player_gameweek's value/selected/transfers_* shape.
+-- instead. A view collapsing the last snapshot per gameweek into
+-- fact_player_gameweek's value/selected/transfers_* shape is planned but not
+-- built yet (docs/live_api_connector_plan.md, item S3).
 CREATE TABLE fact_player_snapshot (
     season_id            VARCHAR NOT NULL REFERENCES dim_season(season_id),
     player_code          INTEGER NOT NULL REFERENCES dim_player(player_code),

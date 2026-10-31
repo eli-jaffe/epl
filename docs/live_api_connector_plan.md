@@ -205,6 +205,13 @@ not just this list.
       derives `season_id` (`2026-27`, matches `dim_season.is_current`); writes
       `manifest.json` (`source`, `fetched_at`, `season_id`, `gameweeks`).
       Verified: ran successfully, GW1–9 landed.
+- [x] PR #10 review fixes in `live_api.py` / `config.py` / `schema.sql`
+      (2026-10-31): atomic landing (writes `<ts>.partial`, renames after the
+      manifest); non-JSON 200 responses retried; clear error when `events` is
+      empty (between seasons); `LIVE_REQUEST_PAUSE_SECONDS` (0.2s) after each
+      successful call; `fact_player_snapshot` comment no longer implies the S3
+      view exists. Checked by re-running the extract and unit-testing the retry
+      and empty-events paths with mocks.
 
 ### Schema (do first; show the user the DDL before applying)
 - [x] **S1** Four defensive-stat columns added to `fact_player_gameweek` in
@@ -224,7 +231,9 @@ not just this list.
 - [ ] **S4** Update `README.md` schema diagram/tables
 
 ### Ingestion A — stats refresh (`ingestion/load_live.py`)
-- [ ] **A1** Read latest `raw/live_api/<ts>/` + manifest
+- [ ] **A1** Read latest `raw/live_api/<ts>/` + manifest. Only consider
+      directories **without** the `.partial` suffix (extract renames on success;
+      a leftover `.partial` is a failed pull and safe to delete)
 - [ ] **A2** Upsert `dim_season` (current; flip previous `is_current` to false)
 - [ ] **A3** Upsert `dim_team`, `dim_player` from bootstrap `teams`/`elements`
 - [ ] **A4** Upsert `fact_team_season`, `fact_player_season` (2026-27 only;
@@ -289,10 +298,19 @@ not just this list.
       that `v_player_gameweek_totals` sums them correctly
 
 ### Follow-ups
-- [ ] **F1** Prune old `raw/live_api/<ts>/` directories (policy TBD)
+- [ ] **F1** Prune old `raw/live_api/<ts>/` directories and stale `.partial`
+      ones (policy TBD). Each run currently re-lands ~4.4 MB of `event_live`
+      into `~/epl-data`, which is a git repo, so this grows
 - [ ] **F2** Scheduling (cron/launchd) for A/B once the user wants it
 - [ ] **F3** Consider whether agent tools/views should surface the new defensive
       stats and snapshot data; update `docs/agent_ui_architecture_plan.md`
+- [ ] **F5** Optional: skip re-downloading `event/<gw>/live` for gameweeks
+      that were already finished in the previous complete pull (copy the files
+      instead) — cuts calls and raw-dir growth. Raised in PR #10 review; not
+      done (the plan's original choice was to reload everything each run)
+- [ ] **F6** Minor, from review: `upsert_df` has no schema filter or column
+      quoting and fails obscurely on a table with no PK (moved unchanged from
+      `load_historical.py`)
 - [ ] **F4** Optional: save raw JSON with `indent=2` for human readability
 
 ## Open questions

@@ -33,6 +33,7 @@ RAW_DATA_DIR = Path.home() / "epl-data" / "raw" / "github"
 FPL_API_BASE = "https://fantasy.premierleague.com/api"
 LIVE_RAW_DATA_DIR = Path.home() / "epl-data" / "raw" / "live_api"
 LIVE_MAX_ATTEMPTS = 4
+LIVE_REQUEST_PAUSE_SECONDS = 0.2  # politeness gap between calls; the ~670-call backfill leans on it
 
 REQUEST_TIMEOUT_SECONDS = 30
 USER_AGENT = "epl-fantasy-app-data-ingestion (personal project)"

@@ -7,7 +7,9 @@ manifest.json. The separate load step does the transform and DB writes.
 
 Every run lands in its own timestamped directory (unlike the GitHub landing
 zone, which keeps only the latest snapshot) because there's no commit SHA to
-identify a live pull — the timestamp *is* its source_ref.
+identify a live pull — the timestamp *is* its source_ref. A run writes into
+"<timestamp>.partial" and renames it only once every file and the manifest
+are saved, so a directory without the suffix is always a complete pull.
 """
 import json
 import sys
@@ -26,14 +28,18 @@ def make_session() -> requests.Session:
 
 
 def get_json(session: requests.Session, path: str):
-    """GET with retry/backoff — the API is busier around gameweek deadlines."""
+    """GET with retry/backoff — the API is busier around gameweek deadlines.
+    A 200 with a non-JSON body (FPL serves maintenance pages during its
+    update windows) is retried like a transient failure."""
     url = f"{config.FPL_API_BASE}/{path}"
     for attempt in range(1, config.LIVE_MAX_ATTEMPTS + 1):
         try:
             resp = session.get(url, timeout=config.REQUEST_TIMEOUT_SECONDS)
             resp.raise_for_status()
-            return resp.json()
-        except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as exc:
+            data = resp.json()
+            time.sleep(config.LIVE_REQUEST_PAUSE_SECONDS)
+            return data
+        except (requests.ConnectionError, requests.Timeout, requests.HTTPError, ValueError) as exc:
             retryable = not isinstance(exc, requests.HTTPError) or exc.response.status_code >= 500 \
                 or exc.response.status_code == 429
             if attempt == config.LIVE_MAX_ATTEMPTS or not retryable:
@@ -46,6 +52,8 @@ def get_json(session: requests.Session, path: str):
 def derive_season_id(events: list[dict]) -> str:
     """The API only exposes the current season, so derive its id from the
     first gameweek's deadline: EPL seasons start in August."""
+    if not events:
+        raise RuntimeError("bootstrap-static returned no events; FPL is probably between seasons")
     first = datetime.fromisoformat(events[0]["deadline_time"].replace("Z", "+00:00"))
     start_year = first.year if first.month >= 7 else first.year - 1
     return f"{start_year}-{(start_year + 1) % 100:02d}"
@@ -60,7 +68,8 @@ def run() -> dict:
     session = make_session()
     fetched_at = datetime.now(timezone.utc)
     stamp = fetched_at.isoformat()
-    dest = config.LIVE_RAW_DATA_DIR / fetched_at.strftime("%Y%m%dT%H%M%SZ")
+    final_dest = config.LIVE_RAW_DATA_DIR / fetched_at.strftime("%Y%m%dT%H%M%SZ")
+    dest = final_dest.with_name(final_dest.name + ".partial")
 
     print("Fetching bootstrap-static...")
     bootstrap = get_json(session, "bootstrap-static/")
@@ -87,13 +96,14 @@ def run() -> dict:
         "gameweeks": gameweeks,
     }
     save(dest, "manifest.json", manifest)
-    print(f"\nManifest written to {dest / 'manifest.json'}")
+    dest.rename(final_dest)
+    print(f"\nManifest written to {final_dest / 'manifest.json'}")
     return manifest
 
 
 if __name__ == "__main__":
     try:
         run()
-    except requests.RequestException as exc:
-        print(f"HTTP error during live ingestion: {exc}", file=sys.stderr)
+    except (requests.RequestException, RuntimeError) as exc:
+        print(f"Error during live ingestion: {exc}", file=sys.stderr)
         sys.exit(1)
