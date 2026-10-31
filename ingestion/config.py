@@ -29,5 +29,10 @@ GLOBAL_FILES = [
 # retained history).
 RAW_DATA_DIR = Path.home() / "epl-data" / "raw" / "github"
 
+# --- Live FPL API (current season only; public, unauthenticated) ---
+FPL_API_BASE = "https://fantasy.premierleague.com/api"
+LIVE_RAW_DATA_DIR = Path.home() / "epl-data" / "raw" / "live_api"
+LIVE_MAX_ATTEMPTS = 4
+
 REQUEST_TIMEOUT_SECONDS = 30
 USER_AGENT = "epl-fantasy-app-data-ingestion (personal project)"

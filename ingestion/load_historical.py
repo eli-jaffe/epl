@@ -50,6 +50,7 @@ import numpy as np
 import pandas as pd
 
 import config
+from common import upsert_df
 
 DB_PATH = Path(__file__).resolve().parent.parent / "db" / "epl.duckdb"
 
@@ -399,30 +400,15 @@ def run():
     print("\nLoading into DuckDB (upsert — nothing is deleted)...")
     con.execute("BEGIN")
     try:
-        def upsert_df(table, df):
-            if len(df) == 0:
-                return
-            pk_cols = con.execute(
-                "SELECT constraint_column_names FROM duckdb_constraints() "
-                "WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'",
-                [table],
-            ).fetchone()[0]
-            update_cols = [c for c in df.columns if c not in pk_cols]
-            set_clause = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
-            con.execute(
-                f"INSERT INTO {table} BY NAME SELECT * FROM df "
-                f"ON CONFLICT ({', '.join(pk_cols)}) DO UPDATE SET {set_clause}"
-            )
-
         # Order matters: dims before facts, so a fact row's FK always finds
         # its dimension row already present (or upserted this same pass).
-        upsert_df("dim_season", dim_season_df)
-        upsert_df("dim_team", dim_team_df)
-        upsert_df("dim_player", dim_player_df)
-        upsert_df("fact_team_season", fact_team_season_df)
-        upsert_df("fact_player_season", fact_player_season_df)
-        upsert_df("fact_fixture", fact_fixture_df)
-        upsert_df("fact_player_gameweek", fact_pgw_df)
+        upsert_df(con, "dim_season", dim_season_df)
+        upsert_df(con, "dim_team", dim_team_df)
+        upsert_df(con, "dim_player", dim_player_df)
+        upsert_df(con, "fact_team_season", fact_team_season_df)
+        upsert_df(con, "fact_player_season", fact_player_season_df)
+        upsert_df(con, "fact_fixture", fact_fixture_df)
+        upsert_df(con, "fact_player_gameweek", fact_pgw_df)
 
         # Backfill start_cost from the earliest gameweek's price per player-season.
         con.execute("""
