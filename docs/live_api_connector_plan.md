@@ -1,7 +1,8 @@
 # Live FPL API Connector — Plan, Findings & Build Checklist
 
-**Status (2026-10-31): extract stage built; common helper extracted; schema
-changes, loaders and backfill NOT built.** Self-contained so any session can
+**Status (2026-10-31): ingestion A (stats refresh) is built, merged (PRs #10,
+#11) and run on the real DB through GW8. Ingestion B (market snapshot),
+ingestion C (`element-summary` backfill) and the follow-ups are NOT built.** Self-contained so any session can
 pick up from here. Read the main `README.md` (schema, data flow) first, and
 `CLAUDE.md` "Data-modeling gotchas". Local-only doc (not committed) per
 `CLAUDE.md` — plans stay uncommitted until the user says otherwise.
@@ -19,8 +20,22 @@ pick up from here. Read the main `README.md` (schema, data flow) first, and
 - Decided architecture: **three separate ingestions with different cadences**
   (A stats, B market snapshot, C market backfill) — see "Design". Refresh is
   **on-demand** (manual command); scheduling can be layered on later.
-- Next step when picking up: `db/migrations/001_live_data.sql` is applied (S1/S2 done); next is S3 (view)
-  and ingestion A, starting with R1 (new-player reconciliation).
+- **How to refresh today** (stop the backend first — DuckDB lock):
+  `cd ingestion && python live_api.py && python load_live.py` (venv active).
+  Loads finished gameweeks only; re-runnable any time.
+- **Where to pick up — suggested order:**
+  1. **C (backfill weekly price/ownership/transfers)** — biggest data gap: GW2-8
+     rows have NULL `value`/`selected`/`transfers_*` (checklist C1-C4). Time a
+     small batch first. Also needed before any double gameweek (C2, D1).
+  2. **B (daily market snapshot)** + view S3 — only useful going forward, so the
+     sooner it runs the more history it captures (B1-B3, S3).
+  3. **F7** standings from fixtures, **T1** club-transfer history, S4 README
+     schema update, then F1-F6 housekeeping.
+  Check the "Build checklist" below for exact state; `[x]` items are done and
+  verified, `[~]` partially.
+- Safety habits used so far: back up `db/epl.duckdb` (`cp`) before applying
+  anything to the real file, test loaders on a copy first, and check idempotency
+  by running twice. Several `db/*.bak` files exist from this work and can be deleted.
 
 ```mermaid
 flowchart TD
