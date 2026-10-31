@@ -236,19 +236,44 @@ not just this list.
       a leftover `.partial` is a failed pull and safe to delete)
 - [x] **A2** (in `load_live.py`) Upsert `dim_season` (current; flip previous `is_current` to false)
 - [x] **A3** (in `load_live.py`) Upsert `dim_team`, `dim_player` from bootstrap `teams`/`elements`
-- [ ] **A4** Upsert `fact_team_season`, `fact_player_season` (2026-27 only;
+- [x] **A4** (built in `load_live.py`, 2026-10-31; not yet run on the real DB)  Upsert `fact_team_season`, `fact_player_season` (2026-27 only;
       cast string numerics)
-- [ ] **A5** Upsert `fact_fixture` from `fixtures.json` (scores NULL for
+- [x] **A5** (built, same caveat)  Upsert `fact_fixture` from `fixtures.json` (scores NULL for
       unplayed fixtures)
-- [ ] **A6** Upsert `fact_player_gameweek` from `event_live`: one row per
+- [x] **A6** (built, same caveat)  Upsert `fact_player_gameweek` from `event_live`: one row per
       `explain` entry; merge `stats`; derive opponent/home/team from fixtures;
       cast ICT/expected strings; `team_code` caveat for club-movers (see identity-matching section). Guard: if a player has >1 `explain` entry in a
       GW, fail loudly (or route to C) rather than loading aggregate stats onto
       each fixture row
-- [ ] **A7** Log `ingest_runs` (`source='live_api'`)
-- [ ] **A8** Validate: re-run twice → identical row counts; spot-check a known
-      player's `v_player_season` totals vs the FPL site; 2026-27 rows now show
-      `source='live_api'`; `season_id` matches `dim_season.is_current`
+- [x] **A7** (built, same caveat)  Log `ingest_runs` (`source='live_api'`)
+- [x] **A9** (2026-10-31, user decision) Load **finished gameweeks only**: the
+      loader intersects the manifest's gameweeks with `bootstrap-static` `events[].finished`
+      and skips the in-progress one (the raw pull keeps it). `fact_player_season`
+      `total_points`/`minutes` are summed from the loaded GW rows instead of taking the
+      API's season totals, which include the in-progress GW. The skipped GW lands on the
+      first run after it closes. Tested on a copy: GW1-8 loaded, GW9 skipped, season
+      totals == sum of loaded GWs for 669/669, re-run identical.
+- [~] **A8** Validated on a copy, then **run on the real `db/epl.duckdb` 2026-10-31**
+      (backup `db/epl.duckdb.pre-facts.bak`; GW1-8 loaded, GW9 skipped, 259,110
+      `fact_player_gameweek` rows, older seasons untouched at 253,890, re-run
+      identical, 0 NULL club columns). Copy-run details:
+      - GW1: all 610 existing rows unchanged across every stat column, `team_code`,
+        `opponent_team_code`, `was_home` and the market columns (`value`, `selected`,
+        `transfers_*`) — the live transform reproduces the GitHub rows exactly
+      - 259,779 `fact_player_gameweek` rows afterwards (+5,279, GW2-9); re-run gives
+        identical counts
+      - (before A9) per-player sum of GW `total_points`/`minutes` equalled `bootstrap-static`'s
+        season totals for 669/669 players; after A9 it equals the loaded-GW sum instead
+      - 0 rows with unresolved club; no NULL `team_code`/`opponent_team_code`/`was_home`;
+        0 NULL `start_cost` for 2026-27
+      - Still to do: eyeball one player against the FPL website
+      Implementation notes: club per row = current club if it is in the fixture, else
+      the club already stored for that row, else the player's latest stored club (handles
+      the 17 GW1 / 8 GW2 rows for players who moved clubs); `start_cost` = `now_cost -
+      cost_change_start`; team standings columns (`played`/`win`/.../`position`) and the
+      `strength` column are deliberately not written (API values are zero/null); a player
+      with >1 fixture in a GW makes the loader raise (see C2/D1). Market columns on
+      GW1 rows keep their GitHub values but their `source` now reads `live_api`.
 
 ### Ingestion B — market snapshot
 - [ ] **B1** Extract: one `bootstrap-static` fetch (reuse `live_api.py`
@@ -280,7 +305,7 @@ not just this list.
       consider reporting which fields changed. Note the generic
       `upsert_df` overwrites every non-PK column, so R1 needs either a
       pre-merge in pandas (coalesce, then upsert) or a dedicated SQL upsert.
-- [ ] **R2** Also reconcile `fact_player_season` for new players (position
+- [x] **R2** (covered by A4: position/team/start_cost for all 669 players)  Also reconcile `fact_player_season` for new players (position
       from `element_type`, team, etc.) and make sure each new `player_code`
       has a `dim_player` row first.
 - [ ] **T1** (future) Record club transfers. Today a player's club is only
@@ -312,6 +337,9 @@ not just this list.
 - [ ] **F6** Minor, from review: `upsert_df` has no schema filter or column
       quoting and fails obscurely on a table with no PK (moved unchanged from
       `load_historical.py`)
+- [ ] **F7** Compute `fact_team_season` standings (`played`, `win`, `draw`, `loss`,
+      `points`, `position`) from `fact_fixture` — the API's values are zero/stale and
+      the loader leaves those columns alone
 - [ ] **F4** Optional: save raw JSON with `indent=2` for human readability
 
 ## Open questions
