@@ -302,23 +302,3 @@ python3 ingestion/github_historical.py
 python3 -c "import duckdb; duckdb.connect('db/epl.duckdb').execute(open('db/schema.sql').read())"
 python3 ingestion/load_historical.py
 ```
-
-## Roadmap
-
-- [~] Live FPL API connector for current-season/gameweek refreshes (`source = 'live_api'`) —
-  stats refresh is built (`ingestion/live_api.py` extract + `load_live.py`
-  loader, PRs #10-#11; finished gameweeks only, on demand). Not built: weekly
-  price/ownership/transfers backfill, the daily market snapshot
-  (`fact_player_snapshot`, currently empty) and its view, scheduling.
-  Checklist: `docs/live_api_connector_plan.md`.
-- [~] LLM-driven agent for exploring the data / decision support (`agent/`) —
-  auth, tool layer, agent loop, observability, an MCP server (including
-  `ask_epl_agent`, the agent-level tool), and agent-generated Vega-Lite charts
-  with a metric store (`list_metrics`/`create_chart`) are built and verified
-  against live data; see `docs/agent_ui_architecture_plan.md` for status/known issues.
-- [~] Frontend for delivering agent output (`ui/`, SvelteKit + TypeScript) —
-  register/login, chat with history, an admin query viewer, and the
-  `/dashboard` page (fixed top-scorer charts + filters, metric info popovers,
-  ask-for-a-chart, saved charts, admin metric library; see
-  `docs/dashboard_plan.md`) are built; still needs a production auth/proxy
-  story (currently dev-only via Vite's proxy).
