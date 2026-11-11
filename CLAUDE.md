@@ -61,6 +61,9 @@ API connector plan, refresh command and build checklist:
 `docs/live_api_connector_plan.md`.
 Architecture research for the agent/UI layers: `references/`.
 
+The project roadmap lives in `ROADMAP.private.md` (gitignored, not in the
+public README) — update it there as components are built.
+
 ## Data-modeling gotchas (read before touching ingestion or schema code)
 
 These are non-obvious and have already caused bugs once:
