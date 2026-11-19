@@ -5,7 +5,7 @@
 (`element-summary` backfill, PR #14) is built and applied to the real DB: weekly
 market columns are filled for all GW1-10 rows. Ingestion B (market snapshot)
 extract + loader are built and the first snapshot is in the real DB (2026-11-18);
-the market snapshot is scheduled daily via GitHub Actions (F2, 2026-11-19); the view S3 and the other follow-ups are NOT built.** Self-contained so any session can
+the market snapshot is scheduled daily via GitHub Actions (F2, 2026-11-19); the view `v_player_gameweek_market` (S3) is built and applied (2026-11-19); its validation (B3) waits for GW11, and the other follow-ups are NOT built.** Self-contained so any session can
 pick up from here. Read the main `README.md` (schema, data flow) first, and
 `CLAUDE.md` "Data-modeling gotchas". Tracked on `main` (committed with the
 live-connector PRs); `ROADMAP.private.md` is the local-only status file.
@@ -36,7 +36,7 @@ live-connector PRs); `ROADMAP.private.md` is the local-only status file.
   2. **B (daily market snapshot)** — B1/B2 built (see checklist). Take a snapshot
      with `cd ingestion && python live_snapshot.py && python load_live_snapshot.py`
      (backend stopped). It only helps if it runs regularly (a skipped day is lost
-     for good), so it is **scheduled (F2, done)**. Next: the view S3 (B3). To bring the DB up
+     for good), so it is **scheduled (F2, done)**. The view S3 is built; next is its validation, B3 (after GW11). To bring the DB up
      to date: `ingestion/refresh_snapshots.sh` (pulls `epl-data`, loads any unloaded snapshots).
   3. **F7** standings from fixtures, **T1** club-transfer history,
      schema update, then F1-F6 housekeeping.
@@ -250,8 +250,21 @@ not just this list.
       `now_cost`, `selected_by_percent`, `total_players`, `transfers_in_event`,
       `transfers_out_event`, `cost_change_event`, lineage. Fresh `schema.sql`
       build verified. Applied (see S1); `fact_player_snapshot` exists, empty, with its PK and 2 FKs.
-- [ ] **S3** View collapsing last snapshot per GW into historical-shaped market
-      columns (name suggestion: `v_player_gameweek_market`)
+- [x] **S3** (2026-11-19) `v_player_gameweek_market` in `db/schema.sql` +
+      `db/migrations/002_market_view.sql` (idempotent, view only). One row per
+      player per gameweek: the most recent snapshot at or before the deadline
+      (first kickoff - 90 min, true for all 38 GWs), with `snapshot_at` showing
+      staleness. Covers gameweeks whose deadline has passed plus the next upcoming
+      one (where "most recent" = the latest market). Decided with the user to stay
+      with the daily snapshot (no extra pre-deadline snapshots), so a morning
+      deadline uses the previous day's 13:00 UTC snapshot. Uses `value`=`now_cost`,
+      `selected`=pct*total/100 (approximate), `transfers_*_event`, balance = in - out;
+      ignores the snapshot's `gameweek` column (after a deadline the API's counters
+      restart for the *next* GW while "current event" still names the old one).
+      Tested on a copy with fake earlier snapshots (cutoff picks the right one),
+      fresh `schema.sql` build, migration twice; applied to the real DB (backup
+      `db/epl.duckdb.pre-market-view.bak`), table counts unchanged. Today it returns
+      GW11 only (no snapshot predates earlier deadlines).
 - [x] **S4** (2026-11-19) `README.md` schema updated: `fact_player_snapshot` box and
       relationships, 5 fact tables, the defensive-stat columns, and a live-API data-flow block.
 
@@ -321,7 +334,10 @@ not just this list.
       snapshots to gameweeks by time (last snapshot before the GW's first kickoff
       in `fact_fixture`), not by that column.
 - [ ] **B3** Validate view `v_player_gameweek_market` against a backfilled GW
-      (needs S3). Note `selected_by_percent` is rounded to 0.1% (~11k managers),
+      (S3 is built; needs GW11 to finish and the C backfill re-run: expect price equal
+      for almost all players, `selected` within the rounding error, transfers close
+      but short of the backfill's full-GW flow since the snapshot is up to ~a day
+      before the deadline). Note `selected_by_percent` is rounded to 0.1% (~11k managers),
       so absolute `selected` derived from it is approximate; the backfill's
       `selected` is exact.
 - Findings (2026-11-18): FPL prices change overnight on most nights, driven by

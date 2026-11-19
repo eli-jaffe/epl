@@ -339,6 +339,11 @@ data duplication — recomputed on read):
   player)` — use this for weekly point totals.
 - **`v_player_season`** — `fact_player_season` joined with player/team names,
   with prices converted to £m.
+- **`v_player_gameweek_market`** — price, estimated ownership and transfers per
+  player per gameweek, from `fact_player_snapshot`: the latest snapshot at or
+  before the gameweek's deadline (first kickoff − 90 min). Covers gameweeks since
+  snapshots began, plus the next upcoming one; earlier gameweeks use the exact
+  columns on `fact_player_gameweek`.
 
 ## Setup
 

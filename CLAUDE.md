@@ -16,8 +16,9 @@ differentials). Three components, in build order:
    `load_live_element_summary.py`, PR #14) is built, and the market snapshot
    (`live_snapshot.py` + `load_live_snapshot.py` -> `fact_player_snapshot`) runs
    daily from a GitHub Actions workflow in `epl-data`; `ingestion/refresh_snapshots.sh`
-   loads new snapshots. Still unbuilt: the view over the snapshots
-   (`v_player_gameweek_market`) and scheduling for the stats refresh.
+   loads new snapshots. The view over the snapshots
+   (`v_player_gameweek_market`) is built; its validation (after GW11) and scheduling
+   for the stats refresh are not.
 2. **Agent** (`agent/`, in progress) — takes a user query, pulls the relevant
    data, runs the appropriate analysis, visualizes it, and returns an
    insight. Will also be able to spin up an on-demand dashboard UI for the
