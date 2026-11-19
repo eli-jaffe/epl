@@ -36,19 +36,21 @@ for either):
 - **Live current season** — `fantasy.premierleague.com/api/*` directly (the same
   API the repo above scrapes). Stats are integrated on demand
   (`ingestion/live_api.py` then `load_live.py`, finished gameweeks only);
-  market data (price/ownership/transfers) is not yet.
+  weekly market data (price/ownership/transfers) is backfilled per player
+  (`live_element_summary.py` then `load_live_element_summary.py`). A daily
+  market snapshot is not built yet.
 
-**Currently loaded** (11 seasons: historical backfill plus 2026-27 GW1-8 from the live API, as of 2026-10-31):
+**Currently loaded** (11 seasons: historical backfill plus 2026-27 GW1-10 from the live API, as of 2026-11-18):
 
 | Table | Rows | Grain |
 |---|--:|---|
 | `dim_season` | 11 | one row per season |
 | `dim_team` | 30 | one row per club ever seen (any season) |
-| `dim_player` | 2,778 | one row per player ever seen (any season) |
+| `dim_player` | 2,781 | one row per player ever seen (any season) |
 | `fact_team_season` | 160 | team x season |
-| `fact_player_season` | 8,027 | player x season |
+| `fact_player_season` | 8,030 | player x season |
 | `fact_fixture` | 3,346 | match x season |
-| `fact_player_gameweek` | 259,110 | player x fixture (see grain note below) |
+| `fact_player_gameweek` | 260,452 | player x fixture (see grain note below) |
 
 **Known, bounded data gaps** — real limitations in the source data, not bugs:
 
@@ -76,7 +78,7 @@ for either):
 
 ```
  vaastav/Fantasy-Premier-League (GitHub)      fantasy.premierleague.com/api/*
-              |                                    (live API -- stats refresh built; market backfill/snapshot not)
+              |                                    (live API -- stats refresh + market backfill built; daily snapshot not)
               |  unauthenticated HTTPS, no credentials of any kind
               v
  +--------------------------------------------------------------+

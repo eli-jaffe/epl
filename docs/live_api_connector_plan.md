@@ -1,8 +1,10 @@
 # Live FPL API Connector — Plan, Findings & Build Checklist
 
-**Status (2026-10-31): ingestion A (stats refresh) is built, merged (PRs #10,
-#11) and run on the real DB through GW8. Ingestion B (market snapshot),
-ingestion C (`element-summary` backfill) and the follow-ups are NOT built.** Self-contained so any session can
+**Status (2026-11-18): ingestion A (stats refresh) is built, merged (PRs #10,
+#11) and was last run on the real DB through GW10. Ingestion C
+(`element-summary` backfill) is built (branch `live-element-summary`) and
+applied to the real DB: weekly market columns are filled for all GW1-10 rows.
+Ingestion B (market snapshot) and the follow-ups are NOT built.** Self-contained so any session can
 pick up from here. Read the main `README.md` (schema, data flow) first, and
 `CLAUDE.md` "Data-modeling gotchas". Local-only doc (not committed) per
 `CLAUDE.md` — plans stay uncommitted until the user says otherwise.
@@ -24,11 +26,14 @@ pick up from here. Read the main `README.md` (schema, data flow) first, and
   `cd ingestion && python live_api.py && python load_live.py` (venv active).
   Loads finished gameweeks only; re-runnable any time.
 - **Where to pick up — suggested order:**
-  1. **C (backfill weekly price/ownership/transfers)** — biggest data gap: GW2-8
-     rows have NULL `value`/`selected`/`transfers_*` (checklist C1-C4). Time a
-     small batch first. Also needed before any double gameweek (C2, D1).
+  1. ~~**C (backfill weekly price/ownership/transfers)**~~ — **done 2026-11-18**
+     (C1-C4). Refresh after new gameweeks finish with
+     `cd ingestion && python live_api.py && python load_live.py && python live_element_summary.py && python load_live_element_summary.py`
+     (backend stopped). `live_element_summary.py` lands inside the latest pull dir
+     and refuses to run if that pull already has `element_summary/`. Still needed
+     before any double gameweek (D1).
   2. **B (daily market snapshot)** + view S3 — only useful going forward, so the
-     sooner it runs the more history it captures (B1-B3, S3).
+     sooner it runs the more history it captures (B1-B3, S3). **Next.**
   3. **F7** standings from fixtures, **T1** club-transfer history, S4 README
      schema update, then F1-F6 housekeeping.
   Check the "Build checklist" below for exact state; `[x]` items are done and
@@ -297,14 +302,34 @@ not just this list.
 - [ ] **B3** Validate view `v_player_gameweek_market` against a backfilled GW
 
 ### Ingestion C — `element-summary` backfill
-- [ ] **C1** Extract: fetch all players sequentially with short sleep; land
-      under the timestamped raw dir (e.g. `element_summary/<id>.json`)
-- [ ] **C2** Load: update `value`, `selected`, `transfers_in/out/balance` (and
-      the four defensive stats) on existing `fact_player_gameweek` rows; for
-      double-gameweek players this also supplies true per-fixture stats
-- [ ] **C3** Re-derive `fact_player_season.start_cost` from earliest GW `value`
-      (as `load_historical.py` does)
-- [ ] **C4** Time a small batch first to confirm no 429s
+- [x] **C1** (2026-11-18, `ingestion/live_element_summary.py`) Extract: all 672
+      players sequentially (0.2s pause, `get_json` retries), landed **inside the
+      latest complete pull dir** as `element_summary/<id>.json` + `manifest.json`
+      (a separate dir would break `load_live.latest_pull_dir()`, which expects
+      `bootstrap-static.json`). Atomic via `element_summary.partial` rename;
+      refuses if `element_summary/` already exists. Ran in 3:49, 13 MB; 6,562
+      history rows = the 6,562 stored 2026-27 rows.
+- [x] **C2** (2026-11-18, `ingestion/load_live_element_summary.py`) Load: updates
+      only `value`, `selected`, `transfers_in/out/balance` (+ lineage) via
+      `upsert_df`, inner-joined on the PK (gameweek, player_code, fixture_id)
+      so it can never insert rows; optional DB-path arg for testing on a copy.
+      Deviation from the original plan: the four defensive stats are **not**
+      overwritten (A already fills them); they and total_points/minutes are
+      cross-checked instead. Tested on a copy twice (identical), then applied to
+      the real DB (backup `db/epl.duckdb.pre-market.bak`): 6,562/6,562 rows
+      matched, 0 stat mismatches, GW1 values equal the GitHub-sourced ones,
+      market columns 6,562/6,562 populated, other seasons unchanged.
+      Known source quirk: 2 rows (GW2) have `transfers_balance` != in - out; FPL
+      publishes it that way and older seasons have the same (2-4 per season).
+      Recompute net transfers from in - out rather than trusting `balance`.
+      Still open: double-gameweek players (A6 guard still raises; D1).
+- [x] **C3** (2026-11-18) No change needed: A's `start_cost = now_cost -
+      cost_change_start` equals the earliest-GW `value` for 672/672 players,
+      including the 62 who first appear after GW1. Don't add the earliest-GW
+      step to the live loader.
+- [x] **C4** (2026-11-18) 40 timed calls: all 200, no 429s, ~0.31s/call incl.
+      the 0.2s pause, ~17.6 KB each; the full 672-call run took 3:49. Pause kept
+      at 0.2s.
 
 ### Reconciliation & history (added 2026-10-31; A3 depends on R1)
 - [x] **R1** (built 2026-10-31 in `ingestion/load_live.py`, dims only; tested on a
