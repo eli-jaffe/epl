@@ -445,6 +445,10 @@ not just this list.
       *public* repos only (GitHub docs), so the private `epl-data` is likely unaffected.
 - [ ] **F3** Consider whether agent tools/views should surface the new defensive
       stats and snapshot data; update `docs/agent_ui_architecture_plan.md`
+      (as of 2026-11-19 the agent does not know `v_player_gameweek_market`: the views
+      it grounds its SQL on are listed in `_GROUNDING_VIEWS` in `agent/tools/sql.py`
+      and the column allowlists in `agent/tools/_common.py`; the views it queries are
+      `v_player_season` / `v_player_gameweek_totals` / `v_player_gameweek`)
 - [ ] **F5** Optional: skip re-downloading `event/<gw>/live` for gameweeks
       that were already finished in the previous complete pull (copy the files
       instead) — cuts calls and raw-dir growth. Raised in PR #10 review; not
