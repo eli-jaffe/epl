@@ -40,7 +40,8 @@ for either):
   (`live_element_summary.py` then `load_live_element_summary.py`). Current
   price/ownership/transfers can be snapshotted on demand into
   `fact_player_snapshot` (`live_snapshot.py` then `load_live_snapshot.py`);
-  it is not scheduled yet.
+  a GitHub Actions workflow in `epl-data` takes it daily
+  and `ingestion/refresh_snapshots.sh` loads new ones.
 
 **Currently loaded** (11 seasons: historical backfill plus 2026-27 GW1-10 from the live API, as of 2026-11-18):
 

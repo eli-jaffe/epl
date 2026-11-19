@@ -5,7 +5,7 @@
 (`element-summary` backfill, PR #14) is built and applied to the real DB: weekly
 market columns are filled for all GW1-10 rows. Ingestion B (market snapshot)
 extract + loader are built and the first snapshot is in the real DB (2026-11-18);
-the view S3, scheduling (F2) and the other follow-ups are NOT built.** Self-contained so any session can
+the market snapshot is scheduled daily via GitHub Actions (F2, 2026-11-19); the view S3 and the other follow-ups are NOT built.** Self-contained so any session can
 pick up from here. Read the main `README.md` (schema, data flow) first, and
 `CLAUDE.md` "Data-modeling gotchas". Local-only doc (not committed) per
 `CLAUDE.md` — plans stay uncommitted until the user says otherwise.
@@ -36,7 +36,8 @@ pick up from here. Read the main `README.md` (schema, data flow) first, and
   2. **B (daily market snapshot)** — B1/B2 built (see checklist). Take a snapshot
      with `cd ingestion && python live_snapshot.py && python load_live_snapshot.py`
      (backend stopped). It only helps if it runs regularly (a skipped day is lost
-     for good), so **F2 scheduling is next**, then the view S3 (B3).
+     for good), so it is **scheduled (F2, done)**. Next: the view S3 (B3). To bring the DB up
+     to date: `ingestion/refresh_snapshots.sh` (pulls `epl-data`, loads any unloaded snapshots).
   3. **F7** standings from fixtures, **T1** club-transfer history, S4 README
      schema update, then F1-F6 housekeeping.
   Check the "Build checklist" below for exact state; `[x]` items are done and
@@ -396,7 +397,24 @@ not just this list.
 - [ ] **F1** Prune old `raw/live_api/<ts>/` directories and stale `.partial`
       ones (policy TBD). Each run currently re-lands ~4.4 MB of `event_live`
       into `~/epl-data`, which is a git repo, so this grows
-- [ ] **F2** Scheduling (cron/launchd) for A/B once the user wants it
+- [x] **F2** (2026-11-19) Scheduling for B, via **GitHub Actions** instead of launchd so it
+      doesn't depend on the laptop being awake (a missed snapshot is unrecoverable).
+      `.github/workflows/market-snapshot.yml` lives in the **private `epl-data` repo**
+      (cron `0 13 * * *` UTC = 08:00 EST / 09:00 EDT, plus manual `workflow_dispatch`
+      with an `epl_ref` input). It checks out `epl-data` and the public `epl` repo,
+      symlinks `~/epl-data` to the checkout, runs `live_snapshot.py`, gzips the file
+      (~178 KB, ~65 MB/year) and commits `raw/live_snapshots/<ts>/` as
+      `github-actions[bot]` (`contents: write` only, no extra secrets). The laptop only
+      loads: `load_live_snapshot.py` catches up on every unloaded snapshot dir (plain or
+      `.json.gz`), retries on the DuckDB lock, and warns if the newest snapshot is >=2
+      days old. Only B is scheduled; A and C stay manual (re-runnable, nothing lost).
+      Verified: FPL API answers GitHub runners (200s); manual runs on the branch and on
+      `main` succeeded in ~17s; pulled commit loaded into a DB copy.
+      Risks to watch: GitHub cron is best-effort (late/skipped runs); GitHub may disable
+      scheduled workflows after ~60 days of repo inactivity (unverified whether the bot's own
+      commits count, so rely on the staleness warning); FPL could someday block runner IPs
+      (the workflow fails loudly on non-200). Local-only snapshots from early testing
+      (`20261119T013940Z`, `...014014Z`) are untracked in `epl-data`.
 - [ ] **F3** Consider whether agent tools/views should surface the new defensive
       stats and snapshot data; update `docs/agent_ui_architecture_plan.md`
 - [ ] **F5** Optional: skip re-downloading `event/<gw>/live` for gameweeks

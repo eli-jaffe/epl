@@ -98,13 +98,21 @@ def run(db_path=DEFAULT_DB_PATH, snapshots_root=None):
     con = connect_with_retry(db_path)
     loaded = set(con.execute("SELECT DISTINCT season_id, snapshot_at FROM fact_player_snapshot").fetchall())
     todo = []
+    newest = None
     for d in dirs:
         m = json.loads((d / "manifest.json").read_text())
         # naive UTC, same convention as fact_fixture.kickoff_time
         snapshot_at = datetime.fromisoformat(m["fetched_at"]).astimezone(timezone.utc).replace(tzinfo=None)
+        newest = snapshot_at
         if (m["season_id"], snapshot_at) not in loaded:
             todo.append((d, m, snapshot_at))
     print(f"{len(dirs)} snapshot dir(s), {len(todo)} not yet in the DB")
+    # The scheduled GitHub Actions run can stop silently (e.g. GitHub disables
+    # scheduled workflows after a stretch of repo inactivity), so say so here.
+    age = datetime.now(timezone.utc).replace(tzinfo=None) - newest
+    if age.days >= 2:
+        print(f"WARNING: newest snapshot is {age.days} days old ({newest:%Y-%m-%d}); "
+              "has the market-snapshot workflow stopped? (git pull epl-data; check its Actions tab)")
     if not todo:
         con.close()
         return
