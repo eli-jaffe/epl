@@ -159,9 +159,11 @@ from Claude Code/Desktop.
 - **Persistent UI: chat-first**, not a stats dashboard with chat bolted on.
 - **Live FPL API connector is explicitly deferred** — this layer can be built
   and demoed against historical data now; live data is a parallel track, see
-  `docs/live_api_connector_plan.md`. (2026-10-31: the stats refresh is merged,
-  PRs #10-#11, and 2026-27 GW1-8 are loaded as `live_api` rows, so the agent
-  now sees current-season data; the market backfill/snapshot are not built.)
+  `docs/live_api_connector_plan.md`. (2026-11-19: the stats refresh is merged,
+  PRs #10-#11, and 2026-27 GW1-10 are loaded as `live_api` rows, so the agent
+  now sees current-season data; the weekly price/ownership/transfers backfill is
+  built and applied, and `fact_player_snapshot` collects a daily market snapshot.
+  The view over the snapshots is not built yet.)
 - **Query tracking and observability are one system, not two.** Every user
   query, agent step/decision, tool call, and output is logged from the start.
   "Which questions recur enough to become fixed functions" is just an
