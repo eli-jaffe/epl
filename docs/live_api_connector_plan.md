@@ -7,8 +7,8 @@ market columns are filled for all GW1-10 rows. Ingestion B (market snapshot)
 extract + loader are built and the first snapshot is in the real DB (2026-11-18);
 the market snapshot is scheduled daily via GitHub Actions (F2, 2026-11-19); the view S3 and the other follow-ups are NOT built.** Self-contained so any session can
 pick up from here. Read the main `README.md` (schema, data flow) first, and
-`CLAUDE.md` "Data-modeling gotchas". Local-only doc (not committed) per
-`CLAUDE.md` — plans stay uncommitted until the user says otherwise.
+`CLAUDE.md` "Data-modeling gotchas". Tracked on `main` (committed with the
+live-connector PRs); `ROADMAP.private.md` is the local-only status file.
 
 ## TL;DR for a new session
 
@@ -38,7 +38,7 @@ pick up from here. Read the main `README.md` (schema, data flow) first, and
      (backend stopped). It only helps if it runs regularly (a skipped day is lost
      for good), so it is **scheduled (F2, done)**. Next: the view S3 (B3). To bring the DB up
      to date: `ingestion/refresh_snapshots.sh` (pulls `epl-data`, loads any unloaded snapshots).
-  3. **F7** standings from fixtures, **T1** club-transfer history, S4 README
+  3. **F7** standings from fixtures, **T1** club-transfer history,
      schema update, then F1-F6 housekeeping.
   Check the "Build checklist" below for exact state; `[x]` items are done and
   verified, `[~]` partially.
@@ -252,7 +252,8 @@ not just this list.
       build verified. Applied (see S1); `fact_player_snapshot` exists, empty, with its PK and 2 FKs.
 - [ ] **S3** View collapsing last snapshot per GW into historical-shaped market
       columns (name suggestion: `v_player_gameweek_market`)
-- [ ] **S4** Update `README.md` schema diagram/tables
+- [x] **S4** (2026-11-19) `README.md` schema updated: `fact_player_snapshot` box and
+      relationships, 5 fact tables, the defensive-stat columns, and a live-API data-flow block.
 
 ### Ingestion A — stats refresh (`ingestion/load_live.py`)
 - [x] **A1** (`latest_pull_dir()` in `load_live.py`) Read latest `raw/live_api/<ts>/` + manifest. Only consider

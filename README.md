@@ -109,12 +109,33 @@ for either):
                                           only, the .duckdb file is gitignored)
    dim_season, dim_team, dim_player
    fact_team_season, fact_player_season, fact_fixture, fact_player_gameweek
+   fact_player_snapshot   (append-only market snapshots, live API only)
    ingest_runs   (append-only lineage log: source, source_ref, status per run)
               |
               v
  v_player_gameweek, v_player_gameweek_totals, v_player_season
    (denormalized consumption views -- what the LLM agent and frontend
     will query, so they don't have to hand-roll the dimension joins)
+```
+
+**Live current season** (2026-27) takes three paths into the same database, all
+unauthenticated, landing raw JSON under `~/epl-data/raw/` before any DB write:
+
+```
+ fantasy.premierleague.com/api/*
+   |
+   |- bootstrap-static, fixtures, event/<gw>/live        (stats refresh, on demand)
+   |    live_api.py -> raw/live_api/<ts>/ -> load_live.py
+   |    -> dims, fact_team_season, fact_player_season, fact_fixture, fact_player_gameweek
+   |
+   |- element-summary/<player_id> x ~670                 (market backfill, on demand)
+   |    live_element_summary.py -> raw/live_api/<ts>/element_summary/
+   |    -> load_live_element_summary.py -> value/selected/transfers_* on existing
+   |       fact_player_gameweek rows (never inserts)
+   |
+   '- bootstrap-static, current price/ownership/transfers (market snapshot, daily)
+        GitHub Actions (workflow in epl-data) -> raw/live_snapshots/<ts>/ (gzipped)
+        -> git pull + load_live_snapshot.py (refresh_snapshots.sh) -> fact_player_snapshot
 ```
 
 Every row in every table also carries `source` (`'github_repo'` | `'live_api'`),
@@ -126,7 +147,7 @@ from.
 ## Database schema
 
 **Design principles:**
-- **Star schema**: 3 dimensions (`dim_season`, `dim_team`, `dim_player`) + 4 fact
+- **Star schema**: 3 dimensions (`dim_season`, `dim_team`, `dim_player`) + 5 fact
   tables, keyed on FPL's stable `code` for players/teams — *not* the `id` field,
   which is reassigned every season (e.g. Salah's `id` changed 283 → 308 → 328 →
   381 across four seasons while his `code` stayed `118748`).
@@ -162,6 +183,10 @@ dim_season (season_id)  dim_team (team_code)  dim_player (player_code)
                             fixture_id)
                               -- FK: team_code, opponent_team_code -> dim_team
                               -- FK: fixture_id -> fact_fixture (same season_id)
+
+    fact_player_snapshot  (season_id, player_code,            [PK]
+                            snapshot_at)
+                              -- FK: season_id -> dim_season, player_code -> dim_player
 ```
 
 ### Table detail
@@ -261,12 +286,32 @@ Grain: one row per scheduled match per season
 |       was_home/starts/minutes                                                 |
 |       total_points/goals/assists/...           ~20 performance stat cols      |
 |       expected_goals/assists/...     DOUBLE    xG/xA/xGI/xGC                  |
+|       tackles/recoveries/clearances_blocks_interceptions/                     |
+|         defensive_contribution                 newer stats, NULL before 2025-26 |
 |       value/selected/transfers_*               price + ownership that GW      |
 |       source, source_ref, loaded_at                                           |
 +-------------------------------------------------------------------------------+
 Grain: one row per player per FIXTURE (not strictly per
 gameweek -- a double gameweek gives a player two rows
 for the same season_id+gameweek, one per fixture_id)
+
++-------------------------------------------------------------------------+
+|                          fact_player_snapshot                           |
++-------------------------------------------------------------------------+
+| PK,FK season_id                     VARCHAR   -> dim_season             |
+| PK,FK player_code                   INTEGER   -> dim_player             |
+| PK    snapshot_at                   TIMESTAMP fetch time (naive UTC)    |
+|       gameweek                      INTEGER   API's current event       |
+|       now_cost                      INTEGER   GBP 0.1m units            |
+|       selected_by_percent           DOUBLE    rounded to 0.1%           |
+|       total_players                 BIGINT    FPL managers              |
+|       transfers_in/out_event        BIGINT    this gameweek's flow so far|
+|       cost_change_event             INTEGER   price change this GW      |
+|       source, source_ref, loaded_at                                     |
++-------------------------------------------------------------------------+
+Grain: one row per player per snapshot (append-only; the API only shows
+"now", so a missed snapshot can't be recovered). `gameweek` still names the
+just-finished GW right after it closes -- match snapshots to gameweeks by time.
 
 +-------------------------------------------------------------------+
 |                            ingest_runs                             |

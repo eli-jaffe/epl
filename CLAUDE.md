@@ -11,9 +11,13 @@ differentials). Three components, in build order:
 1. **Data** (built) — historical player/team/fixture data in a DuckDB
    warehouse, refreshed periodically. Live in-season data is partly built:
    `ingestion/live_api.py` + `ingestion/load_live.py` (PRs #10-#11) refresh
-   finished 2026-27 gameweeks on demand (loaded through GW8 on the real DB).
-   Still unbuilt: the weekly price/ownership/transfers backfill, the daily
-   market snapshot (`fact_player_snapshot` exists but is empty), scheduling.
+   finished 2026-27 gameweeks on demand (loaded through GW10 on the real DB).
+   The weekly price/ownership/transfers backfill (`live_element_summary.py` +
+   `load_live_element_summary.py`, PR #14) is built, and the market snapshot
+   (`live_snapshot.py` + `load_live_snapshot.py` -> `fact_player_snapshot`) runs
+   daily from a GitHub Actions workflow in `epl-data`; `ingestion/refresh_snapshots.sh`
+   loads new snapshots. Still unbuilt: the view over the snapshots
+   (`v_player_gameweek_market`) and scheduling for the stats refresh.
 2. **Agent** (`agent/`, in progress) — takes a user query, pulls the relevant
    data, runs the appropriate analysis, visualizes it, and returns an
    insight. Will also be able to spin up an on-demand dashboard UI for the
