@@ -416,6 +416,17 @@ not just this list.
       commits count, so rely on the staleness warning); FPL could someday block runner IPs
       (the workflow fails loudly on non-200). Local-only snapshots from early testing
       (`20261119T013940Z`, `...014014Z`) are untracked in `epl-data`.
+      **Alerting (2026-11-19):** `live_snapshot.py` validates the payload (500+ players, required
+      fields, events, `total_players`) before landing it. In `epl-data`, a failed
+      `market-snapshot` run opens/comments on a `snapshot-failure` issue (run link, step
+      outcomes), uploads any half-landed response as a 14-day artifact, and the next good run
+      closes the issue; each run writes a summary table. `snapshot-watchdog.yml` (18:00 UTC,
+      `max_age_hours` input, default 12) opens a `snapshot-stale` issue if the newest snapshot is
+      older than that (healthy ~5 h at that hour, a missed day ~29 h) and closes it on recovery.
+      Shared logic: `.github/scripts/alert.sh`, `snapshot_age.py`. Tested: forced failure
+      (nonexistent epl ref), repeat failure, recovery close, watchdog stale and healthy. Not
+      tested: the artifact on a real validation failure. The 60-day auto-disable rule applies to
+      *public* repos only (GitHub docs), so the private `epl-data` is likely unaffected.
 - [ ] **F3** Consider whether agent tools/views should surface the new defensive
       stats and snapshot data; update `docs/agent_ui_architecture_plan.md`
 - [ ] **F5** Optional: skip re-downloading `event/<gw>/live` for gameweeks
