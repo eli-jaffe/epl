@@ -41,7 +41,9 @@ for either):
   price/ownership/transfers can be snapshotted on demand into
   `fact_player_snapshot` (`live_snapshot.py` then `load_live_snapshot.py`);
   a GitHub Actions workflow in `epl-data` takes it daily
-  and `ingestion/refresh_snapshots.sh` loads new ones.
+  and `ingestion/refresh_snapshots.sh` loads new ones. A failed run opens a
+  `snapshot-failure` issue in `epl-data`, and a daily watchdog workflow opens a
+  `snapshot-stale` issue if no fresh snapshot has landed.
 
 **Currently loaded** (11 seasons: historical backfill plus 2026-27 GW1-10 from the live API, as of 2026-11-18):
 
@@ -54,7 +56,7 @@ for either):
 | `fact_player_season` | 8,030 | player x season |
 | `fact_fixture` | 3,346 | match x season |
 | `fact_player_gameweek` | 260,452 | player x fixture (see grain note below) |
-| `fact_player_snapshot` | 672 | player x snapshot time (append-only market snapshots) |
+| `fact_player_snapshot` | 2,688 | player x snapshot time (append-only market snapshots) |
 
 **Known, bounded data gaps** — real limitations in the source data, not bugs:
 
