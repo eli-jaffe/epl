@@ -2,9 +2,10 @@
 
 **Status (2026-11-18): ingestion A (stats refresh) is built, merged (PRs #10,
 #11) and was last run on the real DB through GW10. Ingestion C
-(`element-summary` backfill) is built (branch `live-element-summary`) and
-applied to the real DB: weekly market columns are filled for all GW1-10 rows.
-Ingestion B (market snapshot) and the follow-ups are NOT built.** Self-contained so any session can
+(`element-summary` backfill, PR #14) is built and applied to the real DB: weekly
+market columns are filled for all GW1-10 rows. Ingestion B (market snapshot)
+extract + loader are built and the first snapshot is in the real DB (2026-11-18);
+the view S3, scheduling (F2) and the other follow-ups are NOT built.** Self-contained so any session can
 pick up from here. Read the main `README.md` (schema, data flow) first, and
 `CLAUDE.md` "Data-modeling gotchas". Local-only doc (not committed) per
 `CLAUDE.md` — plans stay uncommitted until the user says otherwise.
@@ -32,8 +33,10 @@ pick up from here. Read the main `README.md` (schema, data flow) first, and
      (backend stopped). `live_element_summary.py` lands inside the latest pull dir
      and refuses to run if that pull already has `element_summary/`. Still needed
      before any double gameweek (D1).
-  2. **B (daily market snapshot)** + view S3 — only useful going forward, so the
-     sooner it runs the more history it captures (B1-B3, S3). **Next.**
+  2. **B (daily market snapshot)** — B1/B2 built (see checklist). Take a snapshot
+     with `cd ingestion && python live_snapshot.py && python load_live_snapshot.py`
+     (backend stopped). It only helps if it runs regularly (a skipped day is lost
+     for good), so **F2 scheduling is next**, then the view S3 (B3).
   3. **F7** standings from fixtures, **T1** club-transfer history, S4 README
      schema update, then F1-F6 housekeeping.
   Check the "Build checklist" below for exact state; `[x]` items are done and
@@ -296,10 +299,36 @@ not just this list.
       GW1 rows keep their GitHub values but their `source` now reads `live_api`.
 
 ### Ingestion B — market snapshot
-- [ ] **B1** Extract: one `bootstrap-static` fetch (reuse `live_api.py`
-      helpers; separate entry point so it can run on its own schedule)
-- [ ] **B2** Load into `fact_player_snapshot` (append; PK `(player_code, snapshot_at)`)
+- [x] **B1** (2026-11-18, `ingestion/live_snapshot.py`) Extract: one
+      `bootstrap-static` fetch (reuses `live_api.py` helpers), landed in
+      `~/epl-data/raw/live_snapshots/<ts>/` with a manifest, via a `.partial`
+      rename. Deliberately a **separate subtree** (`config.LIVE_SNAPSHOT_RAW_DIR`):
+      `load_live.latest_pull_dir()` takes the newest dir under `raw/live_api/` and
+      would break on a snapshot-only directory. ~1.9 MB per run, so retention (F1)
+      matters more once this runs daily.
+- [x] **B2** (2026-11-18, `ingestion/load_live_snapshot.py`) Load into
+      `fact_player_snapshot` (append; PK `(season_id, player_code, snapshot_at)`);
+      `snapshot_at` = fetch time (naive UTC), so re-loading a pull is idempotent
+      and a new pull appends. Players missing from `dim_player` are skipped and
+      counted in `ingest_runs.notes` (so an unattended run survives a new signing;
+      run `load_live.py` first to add them). Optional DB-path arg. Tested on a
+      copy: same pull twice = 672 rows, a second pull = 1,344, values match the
+      raw file. Applied to the real DB (backup `db/epl.duckdb.pre-snapshot.bak`):
+      672 rows, 0 skipped. `gameweek` stores the API's current event, which still
+      names the just-finished GW before the next opens, so S3 should match
+      snapshots to gameweeks by time (last snapshot before the GW's first kickoff
+      in `fact_fixture`), not by that column.
 - [ ] **B3** Validate view `v_player_gameweek_market` against a backfilled GW
+      (needs S3). Note `selected_by_percent` is rounded to 0.1% (~11k managers),
+      so absolute `selected` derived from it is approximate; the backfill's
+      `selected` is exact.
+- Findings (2026-11-18): FPL prices change overnight on most nights, driven by
+  transfer activity, ~0.1m per change; third-party sources report a ~0.3m/week
+  cap (unverified for 2026-27; our data shows 0-3 step weekly moves, none
+  larger). Transfer counters move continuously (395/669 players changed in 40
+  min); `selected_by_percent` barely does. See the snapshot's `transfers_*_event`
+  for the finer-grained signal. `transfers_balance` != in - out on a few rows in
+  every season (FPL's own data), so recompute net from in - out.
 
 ### Ingestion C — `element-summary` backfill
 - [x] **C1** (2026-11-18, `ingestion/live_element_summary.py`) Extract: all 672

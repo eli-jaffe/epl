@@ -32,6 +32,9 @@ RAW_DATA_DIR = Path.home() / "epl-data" / "raw" / "github"
 # --- Live FPL API (current season only; public, unauthenticated) ---
 FPL_API_BASE = "https://fantasy.premierleague.com/api"
 LIVE_RAW_DATA_DIR = Path.home() / "epl-data" / "raw" / "live_api"
+# Daily market snapshots land in their own subtree: load_live.latest_pull_dir()
+# takes the newest directory under LIVE_RAW_DATA_DIR and expects event_live/ in it.
+LIVE_SNAPSHOT_RAW_DIR = Path.home() / "epl-data" / "raw" / "live_snapshots"
 LIVE_MAX_ATTEMPTS = 4
 LIVE_REQUEST_PAUSE_SECONDS = 0.2  # politeness gap between calls; the ~670-call backfill leans on it
 
