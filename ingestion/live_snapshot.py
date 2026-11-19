@@ -22,6 +22,26 @@ import config
 from live_api import derive_season_id, get_json, make_session, save
 
 
+REQUIRED_PLAYER_KEYS = ["code", "now_cost", "selected_by_percent", "transfers_in_event",
+                        "transfers_out_event", "cost_change_event"]
+
+
+def validate_bootstrap(bootstrap) -> None:
+    """A 200 response can still be garbage (a maintenance page that happens to
+    be JSON, a half-built payload between seasons). Fail loudly rather than land
+    a snapshot the loader would silently turn into bad rows."""
+    elements = bootstrap.get("elements") if isinstance(bootstrap, dict) else None
+    if not elements or len(elements) < 500:
+        raise RuntimeError(f"bootstrap-static looks wrong: {len(elements or [])} players (expected 500+)")
+    missing = [k for k in REQUIRED_PLAYER_KEYS if k not in elements[0]]
+    if missing:
+        raise RuntimeError(f"bootstrap-static players are missing fields: {missing}")
+    if not bootstrap.get("events"):
+        raise RuntimeError("bootstrap-static has no events (FPL is probably between seasons)")
+    if not bootstrap.get("total_players"):
+        raise RuntimeError("bootstrap-static has no total_players")
+
+
 def run() -> dict:
     session = make_session()
     fetched_at = datetime.now(timezone.utc)
@@ -31,6 +51,7 @@ def run() -> dict:
     print("Fetching bootstrap-static...")
     bootstrap = get_json(session, "bootstrap-static/")
     save(dest, "bootstrap-static.json", bootstrap)
+    validate_bootstrap(bootstrap)   # on failure the .partial dir stays behind for diagnosis
 
     manifest = {"source": "live_api", "stage": "snapshot", "fetched_at": fetched_at.isoformat(),
                 "season_id": derive_season_id(bootstrap["events"])}
